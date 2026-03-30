@@ -1,0 +1,8 @@
+.venv
+.env
+.env.traffic
+__pycache__
+.pytest_cache
+data/
+cache/
+*.pyc
