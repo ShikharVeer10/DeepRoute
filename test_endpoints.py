@@ -22,7 +22,7 @@ def test_endpoints():
     route_payload = {
         "origin": {"latitude": 17.3850, "longitude": 78.4867},
         "destination": {"latitude": 12.9716, "longitude": 77.5946},
-        "model_type": "ensemble",
+        "model_type": "xgboost",
         "objective": "balanced",
         "num_alternatives": 2
     }

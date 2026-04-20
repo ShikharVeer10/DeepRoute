@@ -34,37 +34,6 @@ def train_xgboost(
     output_dir: str = "data/models",
     seed: int = 42,
 ) -> dict:
-    """
-    Train an XGBoost regressor on synthetic traffic data.
-    Falls back to sklearn GBM if xgboost is not installed.
-    
-    Parameters
-    ----------
-    n_samples : int
-        Number of training samples
-    n_estimators : int
-        Number of boosting rounds
-    max_depth : int
-        Maximum tree depth
-    learning_rate : float
-        Learning rate (shrinkage)
-    subsample : float
-        Subsample ratio for training set
-    colsample_bytree : float
-        Column subsample ratio
-    reg_alpha : float
-        L1 regularization term
-    reg_lambda : float
-        L2 regularization term
-    output_dir : str
-        Directory to save the model
-    seed : int
-        Random seed
-
-    Returns
-    -------
-    dict with training metrics and model performance.
-    """
     if not _HAS_XGB:
         from sklearn.ensemble import GradientBoostingRegressor
         print("[XGB] xgboost not installed — falling back to sklearn GBM")
@@ -131,7 +100,7 @@ def train_xgboost(
         "model_path": str(model_path),
     }
 
-    print(f"[XGB] ✅ Test MAE: {mae:.6f} | RMSE: {rmse:.6f} | R²: {r2:.6f}")
+    print(f"[XGB] Test MAE: {mae:.6f} | RMSE: {rmse:.6f} | R²: {r2:.6f}")
     return metrics
 
 

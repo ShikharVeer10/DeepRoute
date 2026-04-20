@@ -1,6 +1,3 @@
-"""
-Spatial feature extraction from road segment attributes.
-"""
 
 from app.schemas import SpatialFeatures
 

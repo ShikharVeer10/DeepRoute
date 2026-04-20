@@ -49,7 +49,6 @@ except Exception as e:
 
 
 class RouteContext(BaseModel):
-    """Context data injected into the agent for decision-making."""
     origin_name: str = "Origin"
     destination_name: str = "Destination"
     total_distance_km: float = 0.0
@@ -64,9 +63,6 @@ class RouteContext(BaseModel):
     num_alternatives: int = 1
     departure_time: str = ""
     model_used: str = "Ensemble"
-
-
-# ─── Fallback recommendation (no API key needed) ─────────────────────────────
 
 
 def build_recommendation_from_data(context: RouteContext) -> RouteRecommendation:

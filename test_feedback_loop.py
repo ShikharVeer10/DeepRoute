@@ -39,12 +39,12 @@ record_trip(
     departure_time=now_iso,
     predicted_travel_time_s=predicted_time_s,
     distance_m=570000,
-    model_used="ensemble",
+    model_used="xgboost",
 )
 
 record_prediction(
     prediction_id=pred_id,
-    model_used="ensemble",
+    model_used="xgboost",
     predicted_factor=1.2,
     predicted_travel_time_s=predicted_time_s,
     origin_lat=origin_lat, origin_lon=origin_lon,
@@ -70,11 +70,11 @@ else:
     print(f"         ❌ Failed! {response.status_code} {response.text}")
 
 print(f"\n[STEP 4] Background accuracy model tracking triggered.")
-stats = get_prediction_accuracy(model_name="ensemble")
+stats = get_prediction_accuracy(model_name="xgboost")
 
-if "ensemble" in stats:
-    ens = stats["ensemble"]
-    print(f"\n📈 ENSEMBLE MODEL ACCURACY STATS GENERATED")
+if "xgboost" in stats:
+    ens = stats["xgboost"]
+    print(f"\n📈 XGBOOST MODEL ACCURACY STATS GENERATED")
     print(f"   Total Trips Assessed: {ens['total']}")
     print(f"   Avg Predicted:        {ens['avg_predicted']/3600:.1f} hr")
     print(f"   Avg Actual:           {ens['avg_actual']/3600:.1f} hr")

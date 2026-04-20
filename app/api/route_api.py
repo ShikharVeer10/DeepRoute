@@ -1,6 +1,5 @@
 """
 DeepRoute — Route Planning API Layer
-
 Endpoints:
   POST /api/route           — Plan a route with ML/DL predictions
   POST /api/alternatives    — Generate alternative routes explicitly
@@ -169,9 +168,6 @@ def plan_route(request: RouteRequest):
 
         risk_score = features.context.road_risk_score + i * 0.05
         risk_score = min(1.0, risk_score)
-
-        # Create segments with realistic coordinate paths
-        # More segments for longer routes, with slight variations for alternatives
         n_segments = max(5, min(50, int(dist_km / 2)))  # 1 segment per 2km
         seg_dist = dist_m / n_segments
         segments = []
@@ -181,13 +177,9 @@ def plan_route(request: RouteRequest):
         
         for s in range(n_segments):
             seg_time = travel_time_s / n_segments
-            
-            # Calculate segment endpoints with smooth path
             t_start = s / n_segments
             t_end = (s + 1) / n_segments
             t_mid = (t_start + t_end) / 2
-            
-            # Add curvature variation for different routes
             curve_offset = lat_offset_factor * math.sin(math.pi * t_mid)
             
             start_lat = request.origin.latitude + (request.destination.latitude - request.origin.latitude) * t_start
@@ -265,10 +257,6 @@ def plan_route(request: RouteRequest):
         computed_at=datetime.now().isoformat(),
     )
 
-
-# ─── Forecast ─────────────────────────────────────────────────────────────────
-
-
 @router.post("/forecast", response_model=ForecastResponse)
 def forecast_travel_time(request: ForecastRequest):
     """
@@ -312,10 +300,6 @@ def forecast_travel_time(request: ForecastRequest):
         model_used=pred_meta.model_used,
         computed_at=datetime.now().isoformat(),
     )
-
-
-# ─── Risk Assessment ─────────────────────────────────────────────────────────
-
 
 @router.post("/risk", response_model=RiskAssessmentResponse)
 def assess_risk(request: RiskAssessmentRequest):
@@ -393,10 +377,6 @@ def assess_risk(request: RiskAssessmentRequest):
 def get_models():
     """List all registered models."""
     return list_models()
-
-
-# ─── AI Recommendation ───────────────────────────────────────────────────────
-
 
 @router.post("/recommend", response_model=RouteRecommendation)
 def get_recommendation(request: RouteRequest):

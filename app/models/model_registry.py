@@ -14,7 +14,7 @@ _REGISTRY_PATH = Path("data/models/registry.json")
 def _load_registry() -> dict:
     if _REGISTRY_PATH.exists():
         return json.loads(_REGISTRY_PATH.read_text())
-    return {"models": {}, "default": "gbm"}
+    return {"models": {}, "default": "xgboost"}
 
 
 def _save_registry(reg: dict) -> None:

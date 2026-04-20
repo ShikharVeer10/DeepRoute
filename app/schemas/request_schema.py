@@ -15,14 +15,7 @@ from datetime import datetime
 
 class ModelType(str, Enum):
     """Supported model types for travel time prediction."""
-    RANDOM_FOREST = "random_forest"
-    GRADIENT_BOOSTING = "gbm"
     XGBOOST = "xgboost"
-    LSTM = "lstm"
-    GNN = "gnn"
-    TRANSFORMER = "transformer"
-    GNN_LSTM = "gnn_lstm"
-    ENSEMBLE = "ensemble"
 
 
 class OptimizationObjective(str, Enum):
@@ -60,7 +53,7 @@ class RouteRequest(BaseModel):
     )
     model_type: ModelType = Field(
         default=ModelType.XGBOOST,
-        description="ML/DL model to use for travel time prediction"
+        description="ML model to use for travel time prediction"
     )
     objective: OptimizationObjective = Field(
         default=OptimizationObjective.BALANCED,
@@ -92,7 +85,7 @@ class ForecastRequest(BaseModel):
         default=["15min", "30min", "1h"],
         description="Future time windows to forecast"
     )
-    model_type: ModelType = Field(default=ModelType.LSTM)
+    model_type: ModelType = Field(default=ModelType.XGBOOST)
 
 
 class RiskAssessmentRequest(BaseModel):
@@ -133,7 +126,7 @@ class WeatherCondition(BaseModel):
 
 
 class PredictionMetadata(BaseModel):
-    """Metadata about the ML/DL prediction used."""
+    """Metadata about the ML prediction used."""
     model_used: str
     model_version: str = "1.0.0"
     confidence_score: float = Field(ge=0.0, le=1.0)
@@ -265,6 +258,10 @@ class ContextFeatures(BaseModel):
     incident_proximity: float = Field(ge=0.0, description="km to nearest incident")
     event_proximity: float = Field(ge=0.0, description="km to nearest event")
     road_risk_score: float = Field(ge=0.0, le=1.0, default=0.0)
+    # External real-time events Map integrations
+    road_closure_active: bool = False
+    roadworks_active: bool = False
+    accident_active: bool = False
     # Historical context from time-series DB
     historical_speed_kph: float = Field(default=40.0, ge=0.0)
     historical_congestion: float = Field(default=0.3, ge=0.0, le=1.0)
@@ -304,6 +301,9 @@ class CombinedFeatureVector(BaseModel):
             self.context.incident_proximity,
             self.context.event_proximity,
             self.context.road_risk_score,
+            float(self.context.road_closure_active),
+            float(self.context.roadworks_active),
+            float(self.context.accident_active),
             # Historical context
             self.context.historical_speed_kph,
             self.context.historical_congestion,
@@ -321,6 +321,7 @@ class CombinedFeatureVector(BaseModel):
             "length_m", "speed_limit_kph", "num_lanes", "elevation_change_m",
             "congestion_index", "weather_severity",
             "incident_proximity", "event_proximity", "road_risk_score",
+            "road_closure_active", "roadworks_active", "accident_active",
             "historical_speed_kph", "historical_congestion", "speed_reliability",
         ]
 

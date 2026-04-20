@@ -13,8 +13,6 @@ scikit-learn
 xgboost
 joblib
 
-# Deep Learning
-torch
 
 # Graph & Geo
 networkx

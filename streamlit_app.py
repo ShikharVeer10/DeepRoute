@@ -1,6 +1,6 @@
 """
 DeepRoute — Intelligent Route Planner
-Self-contained Streamlit dashboard with ML/DL predictions,
+Self-contained Streamlit dashboard with XGBoost ML predictions,
 OSRM real-road routing, Open-Meteo live weather, and route optimization.
 """
 
@@ -122,7 +122,7 @@ st.markdown("""
 # ============================================================================
 st.markdown('<p class="main-title">🗺️ DeepRoute</p>', unsafe_allow_html=True)
 st.markdown(
-    '<p class="subtitle">ML/DL Ensemble Route Planner · '
+    '<p class="subtitle">XGBoost ML Route Planner · '
     'OSRM Road Routing · Open-Meteo Live Weather</p>',
     unsafe_allow_html=True,
 )
@@ -407,7 +407,9 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
                 "popup": popup,
                 "tooltip": f"{'⭐ ' if is_best else ''}Route {i+1}: {ml_time}",
                 "dash": dash,
-                "is_best": is_best
+                "is_best": is_best,
+                "route_idx": i,
+                "incident_markers": meta.get("incident_markers", []) if k == 0 else []
             })
 
     # If no OSRM routes, make a simple straight line
@@ -439,6 +441,14 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
                 font-size: 13px; color: #e2e8f0; line-height: 1.6;
             }}
             .legend b {{ font-size: 14px; }}
+            @keyframes pulse {{
+                0% {{ box-shadow: 0 0 0 0 rgba(239,68,68,0.6); }}
+                70% {{ box-shadow: 0 0 0 12px rgba(239,68,68,0); }}
+                100% {{ box-shadow: 0 0 0 0 rgba(239,68,68,0); }}
+            }}
+            .incident-pulse {{
+                animation: pulse 2s infinite;
+            }}
         </style>
     </head>
     <body>
@@ -481,6 +491,46 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
                 for (var j = 0; j < r.coords.length; j++) {{
                     allBounds.push(r.coords[j]);
                 }}
+                
+                // Render all incident markers for this route segment
+                if (r.incident_markers && r.incident_markers.length > 0) {{
+                    for (var m = 0; m < r.incident_markers.length; m++) {{
+                        var inc = r.incident_markers[m];
+                        var isMajor = inc.type === 'major_event' || inc.type === 'accident' || inc.type === 'emergency';
+                        var markerSize = isMajor ? 36 : 28;
+                        var pulseClass = isMajor ? 'incident-pulse' : '';
+                        var borderColor = isMajor ? '#ef4444' : '#334155';
+                        var bgColor = isMajor ? 'rgba(239,68,68,0.15)' : 'rgba(15,23,42,0.85)';
+                        
+                        var incHtml = '<div class="' + pulseClass + '" style="' +
+                            'font-size:' + (isMajor ? '22px' : '18px') + ';' +
+                            'background:' + bgColor + ';' +
+                            'border:2px solid ' + borderColor + ';' +
+                            'border-radius:50%;' +
+                            'width:' + markerSize + 'px;height:' + markerSize + 'px;' +
+                            'display:flex;align-items:center;justify-content:center;' +
+                            'box-shadow:0 3px 12px rgba(0,0,0,0.5);' +
+                            'cursor:pointer;' +
+                            '">' + inc.icon + '</div>';
+                        
+                        var incPopup = '<div style="min-width:200px;font-family:Inter,sans-serif;">' +
+                            '<h4 style="margin:0 0 6px 0;color:' + (isMajor ? '#ef4444' : '#f59e0b') + ';">' +
+                            inc.icon + ' ' + inc.label + '</h4>' +
+                            '<p style="margin:0 0 6px 0;color:#cbd5e1;font-size:0.9em;">' + inc.desc + '</p>' +
+                            '<span style="font-size:0.8em;color:#64748b;">Route ' + (inc.route_idx + 1) + ' • ' +
+                            inc.lat.toFixed(4) + ', ' + inc.lon.toFixed(4) + '</span></div>';
+                        
+                        L.marker([inc.lat, inc.lon], {{
+                            icon: L.divIcon({{
+                                html: incHtml,
+                                iconSize: [markerSize, markerSize],
+                                iconAnchor: [markerSize/2, markerSize/2],
+                                className: ''
+                            }}),
+                            zIndexOffset: isMajor ? 2000 : 500
+                        }}).addTo(map).bindPopup(incPopup);
+                    }}
+                }}
             }}
 
             // Fit map to show all routes
@@ -488,7 +538,7 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
                 map.fitBounds(allBounds, {{padding: [30, 30]}});
             }}
 
-            // Legend
+            // Legend with incident types
             var legend = L.control({{position: 'bottomleft'}});
             legend.onAdd = function() {{
                 var div = L.DomUtil.create('div', 'legend');
@@ -500,7 +550,11 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
                     '<span style="display:inline-block;width:12px;height:12px;background:#D50000;margin-right:6px;border-radius:20%;"></span> Severe<br>' +
                     '<div style="margin-top:8px;"><b>Route Type</b></div>' +
                     '<span style="display:inline-block;width:24px;border-bottom:4px solid #fff;margin-right:6px;"></span> Best Route<br>' +
-                    '<span style="display:inline-block;width:24px;border-bottom:4px dashed #94a3b8;margin-right:6px;"></span> Alternatives';
+                    '<span style="display:inline-block;width:24px;border-bottom:4px dashed #94a3b8;margin-right:6px;"></span> Alternatives<br>' +
+                    '<div style="margin-top:8px;"><b>Incidents</b></div>' +
+                    '⚠️ Accident &nbsp; 🚧 Construction<br>' +
+                    '🚔 Police &nbsp; 📷 Speed Camera<br>' +
+                    '🕳️ Road Damage &nbsp; ⛽ Fuel';
                 return div;
             }};
             legend.addTo(map);
@@ -522,16 +576,16 @@ def _generate_route_data(
     Travel time calculation (calibrated against Google Maps):
     ─────────────────────────────────────────────────────────
     OSRM assumes free-flow speeds (~75 km/h avg) which are unrealistic for
-    Indian roads where the real average is ~65 km/h (tolls, urban areas,
-    lane restrictions, trucks, speed limits). Correction factor = 75/65 ≈ 1.15.
+    Indian roads. Google Maps Hyd→Blr = 9h41min vs OSRM = 7h37min.
+    Correction factor = 9.683/7.617 ≈ 1.27.
 
     Final predicted time = OSRM_duration × INDIA_CORRECTION × ML_factor
-    where ML_factor accounts for traffic congestion + weather conditions.
+    where ML_factor is a small adjustment (0.95–1.30) for live traffic/weather.
     """
     # ── India road correction ──────────────────────────────────────────
-    # OSRM free-flow assumed speed vs realistic Indian avg highway speed.
-    # Validated: Hyderabad→Bangalore: OSRM 7h36m × 1.15 ≈ 8h45m + Traffic = ~10h (Matches Google)
-    INDIA_ROAD_CORRECTION = 1.15
+    # Calibrated: OSRM 7h37min × 1.27 = 9h41min = Google Maps for Hyd→Blr
+    # Accounts for: tolls, urban slowdowns, trucks, realistic Indian speeds
+    INDIA_ROAD_CORRECTION = 1.27
 
     dep_iso = departure_dt.isoformat() if departure_dt else None
 
@@ -541,48 +595,41 @@ def _generate_route_data(
     )
 
     mt = ModelType(model_type_str)
-    predicted_factor, pred_meta = predict(features, mt)
 
     traffic_data = get_traffic(hour=departure_dt.hour if departure_dt else None)
     weather_data = get_weather(lat=origin_lat, lon=origin_lon)
 
     haversine_km = _haversine(origin_lat, origin_lon, dest_lat, dest_lon)
 
-    # ── Compute ML adjustment factor ──────────────────────────────────
-    # The raw predicted_factor from the ML model is typically ~1.0-2.0.
-    # We normalize it to a small adjustment around 1.0 so it represents
-    # the traffic+weather effect on top of the corrected base time.
-    # Typical range: 0.95 (favorable) to 1.25 (heavy traffic + bad weather)
-    congestion = traffic_data.get("congestion_index", 0.3)
-    weather_sev = weather_data.get("severity", 0.0)
-    ml_adjustment = 1.0 + (congestion * 0.15) + (weather_sev * 0.10)
-
-    # Peak hour penalty
-    if features.temporal.is_peak_hour:
-        ml_adjustment += 0.08
-
     routes = []
     n_routes = max(num_alternatives, len(osrm_routes))
 
     for i in range(n_routes):
-        route_penalty = 1.0 + (i * 0.08)  # alternatives are inherently slightly slower/longer
+        route_penalty = 1.0 + (i * 0.05)  # alternatives are slightly slower
 
-        # ── 🚨 Simulate Real-World External Factors per Route 🚨 ──
-        # Injecting real-life everyday events into specific routes to test model adaptation.
-        import random as rng
+        # ── Simulate Real-World External Factors per Route ──
+        import random
         external_event = "Clear Route"
-        external_penalty = 1.0
         
-        # 35% chance a route has a structural real-world delay (weighted heavily!)
-        if rng.random() < 0.35:
-            event_type = rng.choice([
-                ("⚠️ Major Accident Ahead", 1.45),      # +45% time penalty
-                ("🚧 Roadworks / Lane Closed", 1.30),  # +30% time penalty
-                ("🏟️ Pre-planned Event Traffic", 1.25),   # +25% time penalty
-                ("🌧️ Localized Flooding", 1.40)        # +40% time penalty
+        # Reset specific external anomaly features per route before predict
+        features.context.road_closure_active = False
+        features.context.roadworks_active = False
+        features.context.accident_active = False
+        
+        if random.random() < 0.30:
+            event_type = random.choice([
+                ("⚠️ Major Accident Ahead", "accident"),      
+                ("🚧 Roadworks / Lane Closed", "roadworks"),  
+                ("🏟️ Pre-planned Event Traffic", "event"),   
+                ("⛔ Road Closed", "closure")        
             ])
             external_event = event_type[0]
-            external_penalty = event_type[1]
+            if event_type[1] == "accident": features.context.accident_active = True
+            elif event_type[1] == "roadworks": features.context.roadworks_active = True
+            elif event_type[1] == "closure": features.context.road_closure_active = True
+            elif event_type[1] == "event": features.context.historical_congestion = 0.85
+            
+        predicted_factor, pred_meta = predict(features, mt)
 
         if i < len(osrm_routes):
             dist_m = osrm_routes[i]["distance"]
@@ -607,16 +654,92 @@ def _generate_route_data(
             osrm_duration_s = None
             steps = []
 
-        # ── Realistic travel time with External Weights ──────────────────
-        # Final = Base OSRM * India Correction * ML Baseline Traffic/Weather * Event Penalty
-        total_adjustment = ml_adjustment * external_penalty * route_penalty
+        # ── Generate multiple traffic incidents along the route (Google Maps style) ──
+        incident_markers = []
+        if osrm_routes and i < len(osrm_routes):
+            coords = osrm_routes[i].get("geometry", {}).get("coordinates", [])
+            if coords and len(coords) > 20:
+                # Use deterministic seed per route so incidents don't change on every re-render
+                import hashlib
+                route_seed = int(hashlib.md5(f"route_{i}_{dist_m}".encode()).hexdigest()[:8], 16)
+                incident_rng = random.Random(route_seed)
+                
+                # Define possible incident types with icons, descriptions, and probabilities
+                incident_types = [
+                    {"icon": "⚠️", "type": "accident", "label": "Accident Reported",
+                     "desc": "Minor collision — expect slowdown", "prob": 0.25},
+                    {"icon": "🚧", "type": "roadworks", "label": "Road Construction",
+                     "desc": "Lane closed for road improvement", "prob": 0.30},
+                    {"icon": "🚔", "type": "police", "label": "Police Checkpoint",
+                     "desc": "Speed enforcement / document check", "prob": 0.20},
+                    {"icon": "📷", "type": "camera", "label": "Speed Camera",
+                     "desc": "Automated speed monitoring zone", "prob": 0.35},
+                    {"icon": "🕳️", "type": "pothole", "label": "Road Damage",
+                     "desc": "Pothole / uneven road surface — reduce speed", "prob": 0.15},
+                    {"icon": "⛽", "type": "fuel", "label": "Fuel Station",
+                     "desc": "Petrol pump ahead", "prob": 0.12},
+                    {"icon": "🚑", "type": "emergency", "label": "Emergency Vehicle",
+                     "desc": "Emergency response in progress — yield", "prob": 0.08},
+                ]
+                
+                # Generate 3-8 incidents spaced along the route
+                n_incidents = incident_rng.randint(3, 8)
+                # Place incidents at roughly evenly-spaced positions (10%-90% of route)
+                positions = sorted([incident_rng.uniform(0.08, 0.92) for _ in range(n_incidents)])
+                
+                for pos in positions:
+                    # Pick an incident weighted by probability
+                    roll = incident_rng.random()
+                    cumulative = 0
+                    chosen = incident_types[0]
+                    for it in incident_types:
+                        cumulative += it["prob"]
+                        if roll < cumulative:
+                            chosen = it
+                            break
+                    
+                    idx = min(int(pos * len(coords)), len(coords) - 1)
+                    lat, lon = coords[idx][1], coords[idx][0]
+                    
+                    # Add small random offset so markers don't overlap exactly
+                    lat += incident_rng.uniform(-0.005, 0.005)
+                    lon += incident_rng.uniform(-0.005, 0.005)
+                    
+                    incident_markers.append({
+                        "lat": lat, "lon": lon,
+                        "icon": chosen["icon"],
+                        "type": chosen["type"],
+                        "label": chosen["label"],
+                        "desc": chosen["desc"],
+                        "route_idx": i,
+                    })
+                
+                # If this route has an active external event, add a prominent marker for it
+                if external_event != "Clear Route":
+                    event_pos = int(len(coords) * 0.45)
+                    incident_markers.append({
+                        "lat": coords[event_pos][1], "lon": coords[event_pos][0],
+                        "icon": external_event.split()[0],
+                        "type": "major_event",
+                        "label": external_event,
+                        "desc": "Major event affecting traffic — ML model has adjusted travel time",
+                        "route_idx": i,
+                    })
+
+        # ── Travel time = OSRM_base × India_correction × ML_factor × route_penalty ──
+        # The ML predicted_factor is now a small adjustment (0.95-1.30) centered ~1.0
+        total_adjustment = predicted_factor * route_penalty
+        
+        congestion = traffic_data.get("congestion_index", 0.3)
+        weather_sev = weather_data.get("severity", 0.0)
+        
         route_congestion = min(1.0, max(
             0.0,
             congestion
-            + (i * 0.08)
+            + (i * 0.06)
             + max(0.0, features.context.historical_congestion - congestion) * 0.15
-            + (1.0 - features.context.speed_reliability) * 0.10
-            + (0.08 if external_penalty > 1.0 else 0.0),
+            + (1.0 - features.context.speed_reliability) * 0.08
+            + (0.15 if external_event != "Clear Route" else 0.0),
         ))
         traffic_color = _route_traffic_color(route_congestion)
         traffic_level = _traffic_label_from_color(traffic_color).lower()
@@ -644,7 +767,7 @@ def _generate_route_data(
         if osrm_duration_s:
             realistic_time_s = osrm_duration_s * INDIA_ROAD_CORRECTION * total_adjustment
         else:
-            realistic_time_s = (dist_m / 1000) / 65.0 * 3600 * total_adjustment
+            realistic_time_s = (dist_m / 1000) / 55.0 * 3600 * total_adjustment
 
         mean_t, ci_low, ci_up = monte_carlo_travel_time(realistic_time_s, 1.0)
 
@@ -673,7 +796,8 @@ def _generate_route_data(
             "rank": i + 1,
             "steps": steps,
             "has_road_geometry": i < len(osrm_routes),
-            "external_event": external_event,  # NEW DATA POINT
+            "external_event": external_event,
+            "incident_markers": incident_markers,
             "traffic_color": traffic_color,
             "traffic_level": traffic_level,
             "traffic_reasoning": traffic_reasoning,
@@ -911,11 +1035,22 @@ if calculate_btn:
 
     comp_data = []
     for i, r in enumerate(routes):
+        # Summarize incidents for this route
+        markers = r.get("incident_markers", [])
+        if markers:
+            # Get unique icons for compact display
+            icons = list(dict.fromkeys(m["icon"] for m in markers))  # unique, ordered
+            incidents_str = " ".join(icons[:5]) + (f" +{len(markers)-5}" if len(markers) > 5 else "")
+            incidents_str = f"{len(markers)} — {incidents_str}"
+        else:
+            incidents_str = "None"
+        
         comp_data.append({
             "Route": f"{'⭐ ' if i==0 else ''}Route {i+1}",
             "Road Distance (km)": round(r["total_distance_m"]/1000, 1),
             "ML Predicted Time": r["total_travel_time_display"],
             "Traffic Level": r.get("traffic_level", "moderate").title(),
+            "Incidents": incidents_str,
             "External Factors": r.get("external_event", "Clear Route"),
             "OSRM Duration": r.get("osrm_duration_display", "—"),
             "Reliability": f"{r['reliability_score']*100:.0f}%",
@@ -1020,6 +1155,21 @@ if calculate_btn:
                         if step["distance_m"] < 5: continue
                         d = f"{step['distance_m']/1000:.1f} km" if step['distance_m'] > 1000 else f"{step['distance_m']:.0f} m"
                         st.caption(f"{j+1}. {step['instruction']} · {d}")
+                
+                # Show detected incidents along this route
+                markers = route.get("incident_markers", [])
+                if markers:
+                    st.markdown(f"**🚨 Incidents Detected ({len(markers)}):**")
+                    for mk in markers:
+                        severity_color = "#ef4444" if mk["type"] in ("accident", "emergency", "major_event") else "#f59e0b"
+                        st.markdown(
+                            f"<div style='display:flex;align-items:center;gap:8px;padding:4px 0;'>"
+                            f"<span style='font-size:1.3em;'>{mk['icon']}</span>"
+                            f"<span style='color:{severity_color};font-weight:600;'>{mk['label']}</span>"
+                            f"<span style='color:#94a3b8;font-size:0.85em;'>— {mk['desc']}</span>"
+                            f"</div>",
+                            unsafe_allow_html=True
+                        )
 
     with tab2:
         st.subheader("Travel Time Forecast")
@@ -1114,7 +1264,7 @@ else:
     st.markdown("##### 🏗️ System Architecture")
     arch_cols = st.columns(4)
     labels = [
-        ("🧠", "ML/DL Ensemble", "RF · GBM · XGB · LSTM · Transformer"),
+        ("🧠", "XGBoost ML Engine", "Gradient-boosted tree prediction"),
         ("🛣️", "OSRM Road Routing", "Real road geometry · Turn-by-turn"),
         ("🌦️", "Open-Meteo Weather", "Live weather · No API key needed"),
         ("🤖", "AI Recommendations", "Rule-based route analysis"),
@@ -1133,4 +1283,4 @@ else:
 # FOOTER
 # ============================================================================
 st.divider()
-st.caption("🗺️ DeepRoute v2.0 — ML/DL pipeline · OSRM road routing · Open-Meteo live weather · Streamlit dashboard")
+st.caption("🗺️ DeepRoute v2.0 — XGBoost ML pipeline · OSRM road routing · Open-Meteo live weather · Streamlit dashboard")

@@ -1,6 +1,6 @@
 # DeepRoute 🛣️
 
-**Intelligent Route Planning System** powered by Machine Learning & Deep Learning models.
+**Intelligent Route Planning System** powered by XGBoost Machine Learning.
 
 ## Architecture
 
@@ -8,21 +8,15 @@ DeepRoute implements a 5-layer intelligence pipeline:
 
 1. **Data Ingestion Layer** — Loads road graphs (OSMnx), simulates live traffic & weather
 2. **Feature Engineering** — Temporal (cyclical encoding), Spatial (road attributes), Context (congestion + weather + risk)
-3. **Prediction & Modeling Layer** — 6 trained models with ensemble prediction
+3. **Prediction & Modeling Layer** — XGBoost gradient-boosted tree model
 4. **Routing & Optimization Engine** — Multi-objective A* with Monte Carlo uncertainty
 5. **Application & Delivery Layer** — FastAPI REST API with Pydantic validation
 
-## ML/DL Models
+## ML Model
 
 | Model | Type | Architecture |
 |---|---|---|
-| Random Forest | ML | 200 trees, max_depth=15 |
-| Gradient Boosting | ML | 300 trees, lr=0.05 |
-| XGBoost | ML | 400 trees, histogram-based |
-| LSTM | DL | Bi-directional, 2 layers, temporal self-attention |
-| GNN (GCN) | DL | 3-layer GCN with batch normalization |
-| Transformer | DL | 2-layer encoder, 4 heads, positional encoding |
-| GNN-LSTM Hybrid | DL | Gated fusion of spatial + temporal embeddings |
+| XGBoost | ML | 400 estimators, histogram-based, max_depth=7, lr=0.03 |
 
 ## Quick Start
 
@@ -30,7 +24,7 @@ DeepRoute implements a 5-layer intelligence pipeline:
 # Install dependencies
 pip install -r requirements.txt
 
-# Generate data & train all models
+# Generate data & train model
 python -m app.models.train_all
 
 # Start the API server
@@ -42,7 +36,7 @@ uvicorn main:app --reload
 | Method | Endpoint | Description |
 |---|---|---|
 | GET | `/api/health` | Health check |
-| POST | `/api/route` | Plan a route with ML/DL predictions |
+| POST | `/api/route` | Plan a route with ML predictions |
 | POST | `/api/forecast` | Forecast future travel times |
 | POST | `/api/risk` | Route risk assessment |
 | GET | `/api/models` | List registered models |
@@ -55,7 +49,7 @@ POST /api/route
 {
   "origin": {"latitude": 16.5062, "longitude": 80.6480},
   "destination": {"latitude": 16.5156, "longitude": 80.6328},
-  "model_type": "ensemble",
+  "model_type": "xgboost",
   "objective": "balanced",
   "num_alternatives": 3,
   "consider_weather": true
@@ -90,23 +84,12 @@ DeepRoute/
 │   │   └── feature_builder.py       # Feature orchestrator
 │   ├── models/
 │   │   ├── __init__.py
-│   │   ├── inference.py             # Unified prediction engine
+│   │   ├── inference.py             # XGBoost prediction engine
 │   │   ├── model_registry.py        # Model versioning
-│   │   ├── train_all.py             # Master training script
-│   │   ├── ml_models/
-│   │   │   ├── __init__.py
-│   │   │   ├── train_rf.py          # Random Forest
-│   │   │   ├── train_gbm.py         # Gradient Boosting
-│   │   │   └── train_xgb.py         # XGBoost
-│   │   └── dl_models/
+│   │   ├── train_all.py             # Training script
+│   │   └── ml_models/
 │   │       ├── __init__.py
-│   │       ├── lstm_model.py        # Bi-LSTM + Attention
-│   │       ├── gnn_model.py         # 3-layer GCN
-│   │       ├── transformer_model.py # Transformer Encoder
-│   │       ├── hybrid_gnn_lstm.py   # Gated GNN-LSTM Fusion
-│   │       ├── train_lstm.py        # LSTM training pipeline
-│   │       ├── train_gnn.py         # GNN training pipeline
-│   │       └── train_transformer.py # Transformer training
+│   │       └── train_xgb.py         # XGBoost training pipeline
 │   ├── routing/
 │   │   ├── __init__.py
 │   │   ├── edge_weight_builder.py   # Multi-objective costs
@@ -123,9 +106,7 @@ DeepRoute/
 - **FastAPI** — High-performance async web framework
 - **Pydantic v2** — Data validation with 25+ schema models
 - **Pydantic-AI** — LLM-powered structured output agent
-- **PyTorch** — Deep learning (LSTM, Transformer)
-- **PyTorch Geometric** — Graph Neural Networks (GCN)
-- **scikit-learn** — Random Forest, Gradient Boosting
-- **XGBoost** — Gradient boosted trees
+- **XGBoost** — Gradient-boosted trees for travel-time prediction
+- **scikit-learn** — Model evaluation & cross-validation utilities
 - **NetworkX** — Graph algorithms (A*, K-shortest paths)
 - **OSMnx** — OpenStreetMap road network loading
