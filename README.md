@@ -16,7 +16,7 @@ DeepRoute implements a 5-layer intelligence pipeline:
 
 | Model | Type | Architecture |
 |---|---|---|
-| XGBoost | ML | 400 estimators, histogram-based, max_depth=7, lr=0.03 |
+| XGBoost | ML | 700 estimators, histogram-based, max_depth=5, lr=0.025 |
 
 ## Quick Start
 
@@ -29,6 +29,9 @@ python -m app.models.train_all
 
 # Start the API server
 uvicorn main:app --reload
+
+# Compare candidate models and score Google ETA alignment (if key configured)
+python -m app.models.model_selection_google
 ```
 
 ## API Endpoints

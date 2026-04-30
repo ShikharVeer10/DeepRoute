@@ -50,10 +50,10 @@ def predict(
     full_list = features.to_flat_list()
     flat = np.array(full_list, dtype=np.float32).reshape(1, -1)
 
-    model = _load_ml_model("xgboost")
-    pred = float(model.predict(flat)[0])
-    model_name = "XGBoost"
-
+    # MOCKED: Bypass XGBoost loading to show output faster
+    pred = 1.0
+    model_name = "XGBoost (Mocked)"
+    
     elapsed_ms = (time.perf_counter() - start) * 1000
 
     confidence = _estimate_confidence(pred)

@@ -12,6 +12,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 
 try:
     from xgboost import XGBRegressor
+
     _HAS_XGB = True
 except ImportError:
     _HAS_XGB = False
@@ -19,23 +20,24 @@ except ImportError:
 from app.data_pipeline.synthetic_data import generate_training_data
 
 # Suppress warnings
-warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings("ignore", category=UserWarning)
 
 
 def train_xgboost(
     n_samples: int = 5000,
-    n_estimators: int = 400,
-    max_depth: int = 7,
-    learning_rate: float = 0.03,
-    subsample: float = 0.8,
-    colsample_bytree: float = 0.8,
-    reg_alpha: float = 0.1,
-    reg_lambda: float = 1.0,
+    n_estimators: int = 700,
+    max_depth: int = 5,
+    learning_rate: float = 0.025,
+    subsample: float = 0.9,
+    colsample_bytree: float = 0.9,
+    reg_alpha: float = 0.02,
+    reg_lambda: float = 1.5,
     output_dir: str = "data/models",
     seed: int = 42,
 ) -> dict:
     if not _HAS_XGB:
         from sklearn.ensemble import GradientBoostingRegressor
+
         print("[XGB] xgboost not installed — falling back to sklearn GBM")
 
     print("[XGB] Generating training data...")
@@ -61,7 +63,7 @@ def train_xgboost(
             random_state=seed,
             tree_method="hist",
             verbosity=0,
-            eval_metric='mae',
+            eval_metric="mae",
         )
     else:
         model = GradientBoostingRegressor(
@@ -72,7 +74,9 @@ def train_xgboost(
             random_state=seed,
         )
 
-    cv_scores = cross_val_score(model, X_train, y_train, cv=5, scoring="neg_mean_absolute_error")
+    cv_scores = cross_val_score(
+        model, X_train, y_train, cv=5, scoring="neg_mean_absolute_error"
+    )
 
     print(f"[XGB] Fitting model...")
     model.fit(X_train, y_train)

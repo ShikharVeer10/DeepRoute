@@ -765,7 +765,16 @@ def _generate_route_data(
         )
 
         if osrm_duration_s:
-            realistic_time_s = osrm_duration_s * INDIA_ROAD_CORRECTION * total_adjustment
+            # Dynamic India road correction based on distance
+            # Urban trips (< 30km) suffer from heavy congestion, lowering average speed significantly.
+            # Highway trips (> 100km) have fewer stops and higher average speeds.
+            if dist_m < 30000:
+                dynamic_correction = 1.55
+            elif dist_m < 100000:
+                dynamic_correction = 1.35
+            else:
+                dynamic_correction = 1.20
+            realistic_time_s = osrm_duration_s * dynamic_correction * total_adjustment
         else:
             realistic_time_s = (dist_m / 1000) / 55.0 * 3600 * total_adjustment
 
