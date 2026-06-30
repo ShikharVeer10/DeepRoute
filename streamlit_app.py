@@ -208,6 +208,7 @@ with st.sidebar:
 
     st.subheader("⚙️ Preferences")
     risk_tolerance = st.select_slider("Risk Tolerance", options=["low", "medium", "high"], value="medium")
+    objective_str = st.selectbox("Optimization Goal", ["balanced", "fastest", "shortest", "safest", "eco", "risk_averse"], index=0)
 
     st.divider()
 
@@ -569,267 +570,54 @@ def _generate_route_data(
     origin_lat, origin_lon, dest_lat, dest_lon,
     model_type_str, num_alternatives, departure_dt,
     osrm_routes,
+    objective_str="balanced",
 ):
     """
     Generate route predictions using local ML models + OSRM road data.
-
-    Travel time calculation (calibrated against Google Maps):
-    ─────────────────────────────────────────────────────────
-    OSRM assumes free-flow speeds (~75 km/h avg) which are unrealistic for
-    Indian roads. Google Maps Hyd→Blr = 9h41min vs OSRM = 7h37min.
-    Correction factor = 9.683/7.617 ≈ 1.27.
-
-    Final predicted time = OSRM_duration × INDIA_CORRECTION × ML_factor
-    where ML_factor is a small adjustment (0.95–1.30) for live traffic/weather.
     """
-    # ── India road correction ──────────────────────────────────────────
-    # Calibrated: OSRM 7h37min × 1.27 = 9h41min = Google Maps for Hyd→Blr
-    # Accounts for: tolls, urban slowdowns, trucks, realistic Indian speeds
-    INDIA_ROAD_CORRECTION = 1.27
-
+    from app.routing.router import plan_intelligent_routes
+    from app.schemas import ModelType, OptimizationObjective
+    
     dep_iso = departure_dt.isoformat() if departure_dt else None
-
-    features = build_features(
+    
+    result = plan_intelligent_routes(
+        origin_lat=origin_lat,
+        origin_lon=origin_lon,
+        dest_lat=dest_lat,
+        dest_lon=dest_lon,
+        model_type=ModelType(model_type_str),
+        objective=OptimizationObjective(objective_str),
+        num_alternatives=num_alternatives,
         departure_time=dep_iso,
-        origin_lat=origin_lat, origin_lon=origin_lon,
+        consider_weather=True,
+        consider_incidents=True,
+        osrm_routes=osrm_routes,
     )
 
-    mt = ModelType(model_type_str)
-
-    traffic_data = get_traffic(hour=departure_dt.hour if departure_dt else None)
-    weather_data = get_weather(lat=origin_lat, lon=origin_lon)
-
-    haversine_km = _haversine(origin_lat, origin_lon, dest_lat, dest_lon)
-
-    routes = []
-    n_routes = max(num_alternatives, len(osrm_routes))
-
-    for i in range(n_routes):
-        route_penalty = 1.0 + (i * 0.05)  # alternatives are slightly slower
-
-        # ── Simulate Real-World External Factors per Route ──
-        import random
-        external_event = "Clear Route"
-        
-        # Reset specific external anomaly features per route before predict
-        features.context.road_closure_active = False
-        features.context.roadworks_active = False
-        features.context.accident_active = False
-        
-        if random.random() < 0.30:
-            event_type = random.choice([
-                ("⚠️ Major Accident Ahead", "accident"),      
-                ("🚧 Roadworks / Lane Closed", "roadworks"),  
-                ("🏟️ Pre-planned Event Traffic", "event"),   
-                ("⛔ Road Closed", "closure")        
-            ])
-            external_event = event_type[0]
-            if event_type[1] == "accident": features.context.accident_active = True
-            elif event_type[1] == "roadworks": features.context.roadworks_active = True
-            elif event_type[1] == "closure": features.context.road_closure_active = True
-            elif event_type[1] == "event": features.context.historical_congestion = 0.85
-            
-        predicted_factor, pred_meta = predict(features, mt)
-
-        if i < len(osrm_routes):
-            dist_m = osrm_routes[i]["distance"]
-            osrm_duration_s = osrm_routes[i]["duration"]
-            # Step-by-step directions
-            steps = []
-            for leg in osrm_routes[i].get("legs", []):
-                for step in leg.get("steps", []):
-                    name = step.get("name", "")
-                    if not name:
-                        name = step.get("ref", "unnamed road")
-                    maneuver = step.get("maneuver", {})
-                    steps.append({
-                        "instruction": f"{maneuver.get('type', 'continue').replace('_',' ').title()} onto {name}",
-                        "distance_m": round(step.get("distance", 0), 1),
-                        "duration_s": round(step.get("duration", 0), 1),
-                        "name": name,
-                    })
-        else:
-            # Fallback: estimate road distance as ~1.35× haversine
-            dist_m = haversine_km * 1000 * 1.35 * (1 + i * 0.06)
-            osrm_duration_s = None
-            steps = []
-
-        # ── Generate multiple traffic incidents along the route (Google Maps style) ──
-        incident_markers = []
-        if osrm_routes and i < len(osrm_routes):
-            coords = osrm_routes[i].get("geometry", {}).get("coordinates", [])
-            if coords and len(coords) > 20:
-                # Use deterministic seed per route so incidents don't change on every re-render
-                import hashlib
-                route_seed = int(hashlib.md5(f"route_{i}_{dist_m}".encode()).hexdigest()[:8], 16)
-                incident_rng = random.Random(route_seed)
-                
-                # Define possible incident types with icons, descriptions, and probabilities
-                incident_types = [
-                    {"icon": "⚠️", "type": "accident", "label": "Accident Reported",
-                     "desc": "Minor collision — expect slowdown", "prob": 0.25},
-                    {"icon": "🚧", "type": "roadworks", "label": "Road Construction",
-                     "desc": "Lane closed for road improvement", "prob": 0.30},
-                    {"icon": "🚔", "type": "police", "label": "Police Checkpoint",
-                     "desc": "Speed enforcement / document check", "prob": 0.20},
-                    {"icon": "📷", "type": "camera", "label": "Speed Camera",
-                     "desc": "Automated speed monitoring zone", "prob": 0.35},
-                    {"icon": "🕳️", "type": "pothole", "label": "Road Damage",
-                     "desc": "Pothole / uneven road surface — reduce speed", "prob": 0.15},
-                    {"icon": "⛽", "type": "fuel", "label": "Fuel Station",
-                     "desc": "Petrol pump ahead", "prob": 0.12},
-                    {"icon": "🚑", "type": "emergency", "label": "Emergency Vehicle",
-                     "desc": "Emergency response in progress — yield", "prob": 0.08},
-                ]
-                
-                # Generate 3-8 incidents spaced along the route
-                n_incidents = incident_rng.randint(3, 8)
-                # Place incidents at roughly evenly-spaced positions (10%-90% of route)
-                positions = sorted([incident_rng.uniform(0.08, 0.92) for _ in range(n_incidents)])
-                
-                for pos in positions:
-                    # Pick an incident weighted by probability
-                    roll = incident_rng.random()
-                    cumulative = 0
-                    chosen = incident_types[0]
-                    for it in incident_types:
-                        cumulative += it["prob"]
-                        if roll < cumulative:
-                            chosen = it
-                            break
-                    
-                    idx = min(int(pos * len(coords)), len(coords) - 1)
-                    lat, lon = coords[idx][1], coords[idx][0]
-                    
-                    # Add small random offset so markers don't overlap exactly
-                    lat += incident_rng.uniform(-0.005, 0.005)
-                    lon += incident_rng.uniform(-0.005, 0.005)
-                    
-                    incident_markers.append({
-                        "lat": lat, "lon": lon,
-                        "icon": chosen["icon"],
-                        "type": chosen["type"],
-                        "label": chosen["label"],
-                        "desc": chosen["desc"],
-                        "route_idx": i,
-                    })
-                
-                # If this route has an active external event, add a prominent marker for it
-                if external_event != "Clear Route":
-                    event_pos = int(len(coords) * 0.45)
-                    incident_markers.append({
-                        "lat": coords[event_pos][1], "lon": coords[event_pos][0],
-                        "icon": external_event.split()[0],
-                        "type": "major_event",
-                        "label": external_event,
-                        "desc": "Major event affecting traffic — ML model has adjusted travel time",
-                        "route_idx": i,
-                    })
-
-        # ── Travel time = OSRM_base × India_correction × ML_factor × route_penalty ──
-        # The ML predicted_factor is now a small adjustment (0.95-1.30) centered ~1.0
-        total_adjustment = predicted_factor * route_penalty
-        
-        congestion = traffic_data.get("congestion_index", 0.3)
-        weather_sev = weather_data.get("severity", 0.0)
-        
-        route_congestion = min(1.0, max(
-            0.0,
-            congestion
-            + (i * 0.06)
-            + max(0.0, features.context.historical_congestion - congestion) * 0.15
-            + (1.0 - features.context.speed_reliability) * 0.08
-            + (0.15 if external_event != "Clear Route" else 0.0),
-        ))
-        traffic_color = _route_traffic_color(route_congestion)
-        traffic_level = _traffic_label_from_color(traffic_color).lower()
-
-        trend = "similar to" if abs(route_congestion - features.context.historical_congestion) < 0.08 else (
-            "higher than" if route_congestion > features.context.historical_congestion else "lower than"
-        )
-        movement_note = (
-            "daily movement on this corridor is stable"
-            if features.context.speed_reliability >= 0.7 else
-            "daily movement on this corridor is volatile"
-        )
-        speed_note = (
-            "current expected speed is below historical typical speed"
-            if traffic_data.get("avg_speed_kph", 40) < features.context.historical_speed_kph else
-            "current expected speed is near/above historical typical speed"
-        )
-        peak_note = "peak-hour pressure is included" if features.temporal.is_peak_hour else "off-peak timing reduces pressure"
-        weather_note = "weather adds delay risk" if weather_sev >= 0.35 else "weather impact is minor"
-        traffic_reasoning = (
-            f"Predicted congestion is {trend} everyday movement patterns for this time/day; "
-            f"{movement_note}; {speed_note}; {peak_note}; {weather_note}."
-        )
-
-        if osrm_duration_s:
-            # Dynamic India road correction based on distance
-            # Urban trips (< 30km) suffer from heavy congestion, lowering average speed significantly.
-            # Highway trips (> 100km) have fewer stops and higher average speeds.
-            if dist_m < 30000:
-                dynamic_correction = 1.55
-            elif dist_m < 100000:
-                dynamic_correction = 1.35
-            else:
-                dynamic_correction = 1.20
-            realistic_time_s = osrm_duration_s * dynamic_correction * total_adjustment
-        else:
-            realistic_time_s = (dist_m / 1000) / 55.0 * 3600 * total_adjustment
-
-        mean_t, ci_low, ci_up = monte_carlo_travel_time(realistic_time_s, 1.0)
-
-        risk_score = features.context.road_risk_score + i * 0.04
-        if "Accident" in external_event or "Flooding" in external_event:
-            risk_score += 0.40  # Massive risk spike
-        risk_score = min(1.0, risk_score)
-
-        reliability = max(0, min(1, 1 - risk_score))
-        emissions = estimate_emissions(dist_m, total_adjustment)
-        fuel = estimate_fuel_cost(dist_m, total_adjustment)
-
-        routes.append({
-            "route_id": str(uuid.uuid4())[:8],
-            "total_distance_m": round(dist_m, 1),
-            "total_travel_time_s": round(mean_t, 1),
-            "total_travel_time_display": _format_duration(mean_t),
-            "osrm_duration_s": osrm_duration_s,
-            "osrm_duration_display": _format_duration(osrm_duration_s) if osrm_duration_s else None,
-            "confidence_interval_lower_s": round(ci_low, 1),
-            "confidence_interval_upper_s": round(ci_up, 1),
-            "risk_level": _classify_risk(risk_score).value,
-            "reliability_score": round(reliability, 3),
-            "emissions_g_co2": round(emissions, 1),
-            "fuel_cost_estimate": round(fuel, 2),
-            "rank": i + 1,
-            "steps": steps,
-            "has_road_geometry": i < len(osrm_routes),
-            "external_event": external_event,
-            "incident_markers": incident_markers,
-            "traffic_color": traffic_color,
-            "traffic_level": traffic_level,
-            "traffic_reasoning": traffic_reasoning,
-            "route_congestion": route_congestion,
-        })
-
-    # Sort routes by fastest calculated travel time (so an accident on Route 1 pushes it down to rank 2 or 3)
-    routes = sorted(routes, key=lambda x: x["total_travel_time_s"])
-    for rank, r in enumerate(routes):
-        r["rank"] = rank + 1
-
+    # Convert the pydantic RouteResult list in result["routes"] to the raw format/dicts expected by streamlit_app.py
+    routes_raw = result["routes_raw"]
+    
     return {
-        "routes": routes,
-        "traffic": traffic_data,
-        "weather": weather_data,
-        "prediction_meta": {
-            "model_used": pred_meta.model_used,
-            "confidence_score": pred_meta.confidence_score,
-            "prediction_latency_ms": pred_meta.prediction_latency_ms,
-            "features_used": pred_meta.features_used,
+        "routes": routes_raw,
+        "traffic": {
+            "congestion_index": result["traffic"].congestion_index,
+            "avg_speed_kph": result["traffic"].avg_speed_kph,
+            "incident_active": result["traffic"].incident_active,
         },
-        "predicted_factor": predicted_factor,
-        "features": features,
+        "weather": {
+            "condition": result["weather"].condition,
+            "severity": result["weather"].severity,
+            "temperature_c": result["weather"].temperature_c,
+            "visibility_km": result["weather"].visibility_km,
+        },
+        "prediction_meta": {
+            "model_used": result["prediction_meta"].model_used,
+            "confidence_score": result["prediction_meta"].confidence_score,
+            "prediction_latency_ms": result["prediction_meta"].prediction_latency_ms,
+            "features_used": result["prediction_meta"].features_used,
+        },
+        "predicted_factor": result["predicted_factor"],
+        "features": result["features"],
     }
 
 
@@ -930,6 +718,7 @@ if calculate_btn:
             route_data = _generate_route_data(
                 origin_lat, origin_lon, dest_lat, dest_lon,
                 model_type, num_alts, dep_dt, osrm_routes,
+                objective_str=objective_str,
             )
 
             routes = route_data["routes"]
@@ -1058,7 +847,11 @@ if calculate_btn:
             "Route": f"{'⭐ ' if i==0 else ''}Route {i+1}",
             "Road Distance (km)": round(r["total_distance_m"]/1000, 1),
             "ML Predicted Time": r["total_travel_time_display"],
+            "Worst-Case Time (CVaR)": r.get("total_cvar_display", "—"),
             "Traffic Level": r.get("traffic_level", "moderate").title(),
+            "Optimization Score": f"{r.get('optimization_score', 0.0):.1f}%",
+            "EV Energy (kWh)": r.get("ev_energy_kwh", 0.0),
+            "Comfort": f"{r.get('driving_comfort_score', 0.0)*100:.0f}%",
             "Incidents": incidents_str,
             "External Factors": r.get("external_event", "Clear Route"),
             "OSRM Duration": r.get("osrm_duration_display", "—"),
@@ -1136,11 +929,15 @@ if calculate_btn:
                 if event_text != "Clear Route":
                     st.error(f"**External Factor Detected:** {event_text}. The model has heavily penalized this route's travel time.")
                 
-                rc1, rc2, rc3, rc4 = st.columns(4)
+                rc1, rc2, rc3, rc4, rc5, rc6 = st.columns(6)
                 with rc1: st.metric("ML Predicted Time", route["total_travel_time_display"])
                 with rc2: st.metric("Road Distance", f"{route['total_distance_m']/1000:.1f} km")
-                with rc3: st.metric("CO₂ Emissions", f"{route['emissions_g_co2']:.0f} g")
-                with rc4: st.metric("Reliability", f"{route['reliability_score']*100:.1f}%")
+                with rc3: st.metric("Optimization Score", f"{route.get('optimization_score', 0.0):.1f}%")
+                with rc4: st.metric("Comfort Score", f"{route.get('driving_comfort_score', 0.0)*100:.0f}%")
+                with rc5: st.metric("EV Energy", f"{route.get('ev_energy_kwh', 0.0):.1f} kWh")
+                with rc6: st.metric("Reliability", f"{route['reliability_score']*100:.1f}%")
+                
+                st.caption(f"🌱 Carbon footprint: {route['emissions_g_co2']:.0f} g CO₂ · ⛽ Estimated fuel cost: ₹{route['fuel_cost_estimate']:.2f}")
                 st.markdown(
                     f"Traffic status: <span style='color:{route.get('traffic_color', '#FFD600')};font-weight:700'>"
                     f"{route.get('traffic_level', 'moderate').upper()}</span>",
@@ -1153,7 +950,8 @@ if calculate_btn:
                     st.caption(f"📍 OSRM base duration: {route['osrm_duration_display']}")
                 ci_lo = route["confidence_interval_lower_s"]
                 ci_hi = route["confidence_interval_upper_s"]
-                st.caption(f"95% Confidence: {ci_lo/60:.1f} – {ci_hi/60:.1f} min")
+                cvar_disp = route.get("total_cvar_display", "—")
+                st.caption(f"95% Confidence Interval: {ci_lo/60:.1f} – {ci_hi/60:.1f} min · ⚠️ Worst-case Delay (CVaR 95%): {cvar_disp}")
                 travel_s = route["total_travel_time_s"]
                 st.progress(min(travel_s / 3600, 1.0), text=f"Duration: {travel_s/60:.1f} min")
 

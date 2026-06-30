@@ -27,6 +27,7 @@ class OptimizationObjective(str, Enum):
     SAFEST = "safest"
     ECO = "eco"
     BALANCED = "balanced"
+    RISK_AVERSE = "risk_averse"
 
 
 class RiskLevel(str, Enum):
@@ -172,6 +173,22 @@ class RouteResult(BaseModel):
         description="Model reasoning for traffic classification",
     )
     rank: int = 1
+    
+    # Newly added fields for advanced multi-route optimization and presentation
+    steps: Optional[list[dict]] = Field(default=[])
+    osrm_duration_s: Optional[float] = Field(default=None)
+    osrm_duration_display: Optional[str] = Field(default=None)
+    has_road_geometry: bool = Field(default=False)
+    external_event: str = Field(default="Clear Route")
+    incident_markers: list[dict] = Field(default=[])
+    route_congestion: float = Field(default=0.0)
+    optimization_score: float = Field(default=0.0)
+    ev_energy_kwh: float = Field(default=0.0)
+    driving_comfort_score: float = Field(default=0.0)
+    safety_score: float = Field(default=0.0)
+    risk_score: float = Field(default=0.0)
+    total_cvar_s: Optional[float] = Field(default=None)
+    total_cvar_display: Optional[str] = Field(default=None)
 
 
 class RouteResponse(BaseModel):
