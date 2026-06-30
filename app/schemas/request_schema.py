@@ -16,6 +16,8 @@ from datetime import datetime
 class ModelType(str, Enum):
     """Supported model types for travel time prediction."""
     XGBOOST = "xgboost"
+    DEEP_ROUTE = "deep_route"
+
 
 
 class OptimizationObjective(str, Enum):

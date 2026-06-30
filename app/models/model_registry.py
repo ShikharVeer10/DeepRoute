@@ -13,7 +13,7 @@ from app.schemas import ModelInfo, ModelType, ModelRegistryResponse
 
 
 _REGISTRY_PATH = Path("data/models/registry.json")
-_SUPPORTED_MODEL_NAMES = {"xgboost"}
+_SUPPORTED_MODEL_NAMES = {"xgboost", "deep_route"}
 
 
 def _default_registry() -> dict:
@@ -26,7 +26,7 @@ def _load_registry() -> dict:
 
     reg = json.loads(_REGISTRY_PATH.read_text())
 
-    # Keep only supported production models (single-model deployment).
+    # Keep only supported production models.
     models = reg.get("models", {})
     filtered_models = {
         name: payload
@@ -36,8 +36,10 @@ def _load_registry() -> dict:
 
     # Ensure the default is valid and deterministic.
     reg["models"] = filtered_models
-    reg["default"] = "xgboost"
+    if reg.get("default") not in _SUPPORTED_MODEL_NAMES:
+        reg["default"] = "xgboost"
     return reg
+
 
 
 def _save_registry(reg: dict) -> None:
@@ -54,15 +56,10 @@ def register_model(
     input_features: list[str] | None = None,
 ) -> ModelInfo:
     """Register a trained model in the registry."""
-    if name not in _SUPPORTED_MODEL_NAMES or model_type != ModelType.XGBOOST:
-        raise ValueError("DeepRoute supports only the xgboost model in production")
+    if name not in _SUPPORTED_MODEL_NAMES or model_type not in (ModelType.XGBOOST, ModelType.DEEP_ROUTE):
+        raise ValueError(f"DeepRoute supports only {_SUPPORTED_MODEL_NAMES} in production")
 
     reg = _load_registry()
-
-    # Enforce single-model registry semantics.
-    reg["models"] = {
-        n: m for n, m in reg.get("models", {}).items() if n in _SUPPORTED_MODEL_NAMES
-    }
 
     info = ModelInfo(
         name=name,
@@ -76,6 +73,7 @@ def register_model(
     reg["models"][name] = info.model_dump()
     _save_registry(reg)
     return info
+
 
 
 def get_model_info(name: str) -> ModelInfo | None:
@@ -96,10 +94,11 @@ def list_models() -> ModelRegistryResponse:
 
 def set_default_model(name: str) -> None:
     if name not in _SUPPORTED_MODEL_NAMES:
-        raise ValueError("DeepRoute supports only the xgboost model in production")
+        raise ValueError(f"DeepRoute supports only {_SUPPORTED_MODEL_NAMES} in production")
 
     reg = _load_registry()
     if name not in reg["models"]:
         raise ValueError(f"Model '{name}' not found in registry")
     reg["default"] = name
     _save_registry(reg)
+
