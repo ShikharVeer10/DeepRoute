@@ -1,115 +1,283 @@
-# DeepRoute 🛣️
+# 🚦 DeepRoute
 
-**Intelligent Route Planning System** powered by XGBoost Machine Learning.
+> **An intelligent route optimization system that combines machine learning, deep learning, and real-time contextual data to provide smarter, faster, and more reliable route recommendations.**
 
-## Architecture
+![Python](https://img.shields.io/badge/Python-3.11+-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-Backend-green)
+![PyTorch](https://img.shields.io/badge/PyTorch-Deep%20Learning-red)
+![XGBoost](https://img.shields.io/badge/XGBoost-ML-success)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
-DeepRoute implements a 5-layer intelligence pipeline:
+---
 
-1. **Data Ingestion Layer** — Loads road graphs (OSMnx), simulates live traffic & weather
-2. **Feature Engineering** — Temporal (cyclical encoding), Spatial (road attributes), Context (congestion + weather + risk)
-3. **Prediction & Modeling Layer** — XGBoost gradient-boosted tree model
-4. **Routing & Optimization Engine** — Multi-objective A* with Monte Carlo uncertainty
-5. **Application & Delivery Layer** — FastAPI REST API with Pydantic validation
+## 📖 Overview
 
-## ML Model
+DeepRoute is an AI-powered route optimization platform designed to improve navigation by considering much more than just the shortest path.
 
-| Model | Type | Architecture |
-|---|---|---|
-| XGBoost | ML | 700 estimators, histogram-based, max_depth=5, lr=0.025 |
+Instead of relying solely on current traffic conditions, DeepRoute analyzes multiple real-world factors such as historical traffic patterns, weather conditions, road characteristics, congestion levels, and contextual information to predict future travel conditions and recommend optimized routes.
 
-## Quick Start
+The project combines machine learning, deep learning, graph-based routing, and optimization techniques into a single modular system that can be extended for intelligent transportation and smart mobility applications.
+
+---
+
+## ✨ Features
+
+- 🚗 Intelligent route planning
+- 📈 Travel time prediction using Machine Learning
+- 🧠 Deep Learning-based forecasting
+- 🗺️ Graph-based road network routing
+- 🌦️ Weather-aware routing
+- 🚦 Traffic congestion analysis
+- 📊 Historical traffic profiling
+- 🎯 Dynamic route optimization
+- 📍 Alternative route generation
+- 📉 Route reliability estimation
+- 🤖 AI-powered route recommendation assistant
+- ⚡ FastAPI REST API
+- 📊 Interactive Streamlit dashboard
+- 🔄 Continuous model improvement pipeline
+
+---
+
+## 🏗️ Project Architecture
+
+> *(Replace this section with your architecture diagram once created.)*
+
+```
+External Data Sources
+        │
+        ▼
+Data Collection
+        │
+        ▼
+Feature Engineering
+        │
+        ▼
+Prediction Models
+        │
+        ▼
+Routing Engine
+        │
+        ▼
+API Layer
+        │
+        ▼
+Dashboard / Client Applications
+```
+
+---
+
+## 📂 Project Structure
+
+```text
+DeepRoute/
+│
+├── app/
+│   ├── api/                 # REST API endpoints
+│   ├── data_pipeline/       # Data collection and preprocessing
+│   ├── inference/           # Prediction pipeline
+│   ├── models/              # Machine Learning & Deep Learning models
+│   ├── optimization/        # Route optimization logic
+│   ├── recommendation/      # AI recommendation engine
+│   ├── routing/             # Graph routing algorithms
+│   ├── services/            # Business logic
+│   └── utils/               # Utility functions
+│
+├── dashboard/               # Streamlit dashboard
+├── datasets/                # Training and testing datasets
+├── notebooks/               # Experiment notebooks
+├── trained_models/          # Saved models
+├── tests/                   # Unit tests
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## ⚙️ Technology Stack
+
+### Backend
+
+- FastAPI
+- Pydantic
+- Uvicorn
+
+### Machine Learning
+
+- XGBoost
+- Scikit-learn
+- Pandas
+- NumPy
+
+### Deep Learning
+
+- PyTorch
+
+### Routing & Maps
+
+- NetworkX
+- OSMnx
+- OSRM
+
+### Visualization
+
+- Streamlit
+- Plotly
+- Matplotlib
+
+---
+
+## 🔄 How DeepRoute Works
+
+The workflow of DeepRoute consists of several stages:
+
+1. Collect road network, traffic, weather, and historical data.
+2. Clean and preprocess the collected data.
+3. Generate contextual and temporal features.
+4. Train machine learning and deep learning models.
+5. Predict travel time and road conditions.
+6. Calculate optimized edge weights.
+7. Generate and rank alternative routes.
+8. Return the best route through the API or dashboard.
+
+---
+
+## 🚀 Getting Started
+
+### Clone the repository
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Generate data & train model
-python -m app.models.train_all
-
-# Start the API server
-uvicorn main:app --reload
-
-# Compare candidate models and score Google ETA alignment (if key configured)
-python -m app.models.model_selection_google
+git clone https://github.com/ShikharVeer10/DeepRoute.git
+cd DeepRoute
 ```
 
-## API Endpoints
+### Create a virtual environment
+
+```bash
+python -m venv .venv
+```
+
+### Activate the environment
+
+**Windows**
+
+```bash
+.venv\Scripts\activate
+```
+
+**Linux/macOS**
+
+```bash
+source .venv/bin/activate
+```
+
+### Install dependencies
+
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## ▶️ Running the Application
+
+### Start the FastAPI server
+
+```bash
+uvicorn app.main:app --reload
+```
+
+### Launch the dashboard
+
+```bash
+streamlit run dashboard/app.py
+```
+
+---
+
+## 🌐 API Endpoints
 
 | Method | Endpoint | Description |
-|---|---|---|
-| GET | `/api/health` | Health check |
-| POST | `/api/route` | Plan a route with ML predictions |
-| POST | `/api/forecast` | Forecast future travel times |
-| POST | `/api/risk` | Route risk assessment |
-| GET | `/api/models` | List registered models |
-| POST | `/api/recommend` | AI-powered route recommendation |
+|---------|----------|-------------|
+| POST | `/route` | Generate an optimized route |
+| POST | `/forecast` | Predict future travel conditions |
+| POST | `/alternatives` | Get alternative routes |
+| POST | `/recommend` | AI-based route recommendation |
+| GET | `/models` | View available prediction models |
+| POST | `/travel_data/collect` | Collect travel data |
 
-### Example Request
+---
 
-```json
-POST /api/route
-{
-  "origin": {"latitude": 16.5062, "longitude": 80.6480},
-  "destination": {"latitude": 16.5156, "longitude": 80.6328},
-  "model_type": "xgboost",
-  "objective": "balanced",
-  "num_alternatives": 3,
-  "consider_weather": true
-}
+## 📊 Core Components
+
+### Data Pipeline
+
+Responsible for collecting, preprocessing, and preparing road, traffic, and weather data.
+
+### Feature Engineering
+
+Transforms raw data into meaningful features used by prediction models.
+
+### Prediction Models
+
+Uses machine learning and deep learning models to estimate travel time and traffic conditions.
+
+### Routing Engine
+
+Generates optimized routes by evaluating multiple possible paths.
+
+### Optimization Module
+
+Ranks candidate routes based on travel time, reliability, congestion, and other optimization criteria.
+
+### Recommendation Engine
+
+Provides intelligent route suggestions and explanations using AI.
+
+---
+
+## 🧪 Testing
+
+Run the test suite:
+
+```bash
+pytest
 ```
 
-## Project Structure
+---
 
-```
-DeepRoute/
-├── main.py                          # FastAPI entry point
-├── requirements.txt
-├── app/
-│   ├── __init__.py
-│   ├── api/
-│   │   ├── __init__.py
-│   │   └── route_api.py             # 6 API endpoints
-│   ├── schemas/
-│   │   ├── __init__.py
-│   │   └── request_schema.py        # Pydantic models (25+ schemas)
-│   ├── data_pipeline/
-│   │   ├── __init__.py
-│   │   ├── osm_loader.py            # OSMnx graph loader
-│   │   ├── traffic_loader.py        # Simulated live traffic
-│   │   ├── weather_loader.py        # Simulated weather
-│   │   └── synthetic_data.py        # Training data generator
-│   ├── features/
-│   │   ├── __init__.py
-│   │   ├── temporal_features.py     # Cyclical time encoding
-│   │   ├── spatial_features.py      # Road segment attributes
-│   │   ├── context_features.py      # Traffic + weather + risk
-│   │   └── feature_builder.py       # Feature orchestrator
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── inference.py             # XGBoost prediction engine
-│   │   ├── model_registry.py        # Model versioning
-│   │   ├── train_all.py             # Training script
-│   │   └── ml_models/
-│   │       ├── __init__.py
-│   │       └── train_xgb.py         # XGBoost training pipeline
-│   ├── routing/
-│   │   ├── __init__.py
-│   │   ├── edge_weight_builder.py   # Multi-objective costs
-│   │   └── router.py               # A* + K-shortest + Monte Carlo
-│   └── agents/
-│       ├── __init__.py
-│       └── route_agent.py           # Pydantic-AI recommendation agent
-└── data/
-    └── models/                      # Trained model artifacts
-```
+## 🔮 Future Improvements
 
-## Technologies
+- Live traffic API integration
+- Reinforcement learning-based routing
+- IoT traffic sensor support
+- Mobile application
+- Cloud deployment
+- Real-time route monitoring
 
-- **FastAPI** — High-performance async web framework
-- **Pydantic v2** — Data validation with 25+ schema models
-- **Pydantic-AI** — LLM-powered structured output agent
-- **XGBoost** — Gradient-boosted trees for travel-time prediction
-- **scikit-learn** — Model evaluation & cross-validation utilities
-- **NetworkX** — Graph algorithms (A*, K-shortest paths)
-- **OSMnx** — OpenStreetMap road network loading
+---
+
+## 🤝 Contributing
+
+Contributions are welcome!
+
+1. Fork the repository
+2. Create a feature branch
+3. Commit your changes
+4. Push the branch
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is licensed under the MIT License.
+
+---
+
+## 👨‍💻 Author
+
+**Shikhar Veeramachineni**
+
+- GitHub: https://github.com/ShikharVeer10
+- Vellore Institute of Technologying
