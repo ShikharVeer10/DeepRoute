@@ -280,4 +280,4 @@ This project is licensed under the MIT License.
 **Shikhar Veeramachineni**
 
 - GitHub: https://github.com/ShikharVeer10
-- Vellore Institute of Technologying
+- Vellore Institute of Technology
