@@ -1,12 +1,3 @@
-"""
-Historical Speed Profile Engine
-
-Provides "Google Maps Typical Traffic" style features:
-  - Per-edge historical speed by hour and day-of-week
-  - Travel time reliability metric (how consistent is the speed?)
-  - Congestion trend detection (is traffic getting worse or better?)
-  - Week-to-week pattern analysis
-"""
 
 from datetime import datetime
 from typing import Optional
@@ -19,18 +10,7 @@ def get_historical_context(
     hour: int | None = None,
     day_of_week: int | None = None,
 ) -> dict:
-    """
-    Get historical speed/congestion context for an edge.
 
-    Returns
-    -------
-    dict with:
-      - historical_speed_kph: average speed at this time
-      - historical_congestion: average congestion at this time
-      - reliability: how predictable the speed is (0-1)
-      - sample_count: number of observations
-      - speed_vs_now: ratio of historical speed vs current
-    """
     from app.storage.database import get_historical_speed_profile
 
     h = hour if hour is not None else datetime.now().hour
@@ -59,12 +39,6 @@ def get_historical_context(
 
 
 def get_congestion_color(congestion_index: float) -> str:
-    """
-    Map congestion index to a color for traffic heatmap.
-    Matches Google Maps color scheme.
-
-    Returns hex color string.
-    """
     if congestion_index < 0.15:
         return "#00C853"   # Green: free flow
     elif congestion_index < 0.30:

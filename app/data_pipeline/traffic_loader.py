@@ -1,37 +1,18 @@
-"""
-Traffic data loader with realistic temporal patterns.
-Provides simulated traffic data based on time-of-day patterns.
-"""
-
 import random
 import math
 from datetime import datetime
 from loguru import logger
 
-
 def _peak_factor(hour: int) -> float:
-    """Calculate traffic peak factor based on hour of day."""
     morning = math.exp(-0.5 * ((hour - 8.5) / 1.5) ** 2)
     evening = math.exp(-0.5 * ((hour - 17.5) / 1.5) ** 2)
     return max(morning, evening)
 
 
 def get_traffic(hour: int | None = None) -> dict:
-    """
-    Get realistic traffic data with temporal patterns and incident simulation.
-
-    Parameters
-    ----------
-    hour : hour of the day (0-23); defaults to current hour
-
-    Returns
-    -------
-    dict with keys: congestion_index, avg_speed_kph, incident_active, incident_proximity_km
-    """
     if hour is None:
         hour = datetime.now().hour
-
-    # Day-of-week factor (weekends lighter)
+        
     day_of_week = datetime.now().weekday()
     weekend_factor = 0.6 if day_of_week >= 5 else 1.0
 
