@@ -1,14 +1,12 @@
 """
 Weather data loader using Open-Meteo API (FREE, no API key needed).
-Falls back to simulated data only if API call fails.
+Falls back to deterministic data only if the API call fails.
 
 Open-Meteo: https://open-meteo.com/
 - No API key required
 - No sign-up required
 - Free for non-commercial / open-source use
 """
-
-import random
 import requests
 from loguru import logger
 
@@ -134,15 +132,15 @@ def _fetch_open_meteo(lat: float, lon: float) -> dict:
 
     temperature = current.get("temperature_2m", 25.0)
 
-    # Estimate visibility from weather code + rain
-    if condition in ("fog",):
-        visibility_km = round(random.uniform(0.5, 3.0), 1)
+    # Deterministic visibility estimate derived from condition severity.
+    if condition == "fog":
+        visibility_km = max(0.5, 3.0 - severity * 2.5)
     elif condition in ("heavy_rain", "thunderstorm", "snow"):
-        visibility_km = round(random.uniform(2.0, 6.0), 1)
+        visibility_km = max(1.0, 6.0 - severity * 4.0)
     elif condition == "rain":
-        visibility_km = round(random.uniform(5.0, 8.0), 1)
+        visibility_km = max(2.5, 8.0 - severity * 3.0)
     else:
-        visibility_km = round(10.0 - severity * 5, 1)
+        visibility_km = max(5.0, 10.0 - severity * 5.0)
 
     weather_data = {
         "condition": condition,
@@ -167,31 +165,22 @@ def _fetch_open_meteo(lat: float, lon: float) -> dict:
 
 
 def _simulate_weather() -> dict:
-    """Generate simulated weather data (fallback)."""
-    _CONDITIONS = ["clear", "cloudy", "rain", "heavy_rain", "fog", "snow", "thunderstorm"]
-
-    condition = random.choices(
-        _CONDITIONS,
-        weights=[0.35, 0.25, 0.15, 0.05, 0.08, 0.05, 0.07],
-        k=1,
-    )[0]
-
-    sev_lo, sev_hi = _SEVERITY_MAP[condition]
-    severity = round(random.uniform(sev_lo, sev_hi), 4)
-
-    temperature = round(random.gauss(28, 6), 1)
-    visibility = max(0.1, round(10 * (1 - severity) + random.gauss(0, 1), 1))
+    """Generate deterministic fallback weather data."""
+    condition = "clear"
+    severity = 0.05
+    temperature = 28.0
+    visibility = 10.0
 
     weather_data = {
         "condition": condition,
         "severity": severity,
         "temperature_c": temperature,
         "visibility_km": visibility,
-        "source": "Simulated",
+        "source": "Deterministic fallback",
     }
 
     logger.debug(
-        f"Weather (Simulated): condition={condition}, severity={severity:.3f}, "
+        f"Weather (Fallback): condition={condition}, severity={severity:.3f}, "
         f"temp={temperature}°C, visibility={visibility}km"
     )
 
