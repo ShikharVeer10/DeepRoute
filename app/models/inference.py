@@ -19,9 +19,15 @@ _ml_cache: dict[str, object] = {}
 
 
 def _load_ml_model(name: str):
-    """Load a sklearn/xgboost model from disk (cached)."""
+    """Load a trained model from disk (cached)."""
     if name not in _ml_cache:
         path = _MODEL_DIR / f"{name}.pkl"
+        if not path.exists():
+            path = _MODEL_DIR / "best_model.pkl"
+        if not path.exists():
+            path = _MODEL_DIR / "lightgbm.pkl"
+        if not path.exists():
+            path = _MODEL_DIR / "xgboost.pkl"
         if not path.exists():
             return None
         _ml_cache[name] = joblib.load(path)

@@ -871,12 +871,12 @@ def _generate_route_data(
         osrm_routes=osrm_routes,
     )
 
-    # Convert the pydantic RouteResult list in result["routes"] to the raw format/dicts expected by streamlit_app.py
+    # Convert the optimized & deduplicated pydantic RouteResult list in result["routes"] to dicts
     # Cap to top 3 best optimal routes (Google Maps Style)
-    routes_raw = result["routes_raw"][:3]
+    routes_dict = [r.dict() for r in result["routes"][:3]]
     
     return {
-        "routes": routes_raw,
+        "routes": routes_dict,
         "traffic": {
             "congestion_index": result["traffic"].congestion_index,
             "avg_speed_kph": result["traffic"].avg_speed_kph,
@@ -983,6 +983,18 @@ if calculate_btn:
     with st.spinner("🔄 Fetching road routes & running ML prediction…"):
         try:
             dep_dt = departure_time or datetime.now()
+
+            # Auto-geocode city names if City Names mode is active
+            if input_method == "City Names" and origin_city and dest_city:
+                try:
+                    geocoder = Nominatim(user_agent="deeproute-planner")
+                    o_loc = geocoder.geocode(origin_city)
+                    d_loc = geocoder.geocode(dest_city)
+                    if o_loc and d_loc:
+                        origin_lat, origin_lon = o_loc.latitude, o_loc.longitude
+                        dest_lat, dest_lon = d_loc.latitude, d_loc.longitude
+                except Exception:
+                    pass
 
             # 1. Fetch real road routes from OSRM
             osrm_routes = _fetch_osrm_routes(

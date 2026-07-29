@@ -175,6 +175,7 @@ class RouteResult(BaseModel):
     rank: int = 1
     
     # Newly added fields for advanced multi-route optimization and presentation
+    coords: Optional[list] = Field(default=[])
     steps: Optional[list[dict]] = Field(default=[])
     osrm_duration_s: Optional[float] = Field(default=None)
     osrm_duration_display: Optional[str] = Field(default=None)
