@@ -286,6 +286,13 @@ class ContextFeatures(BaseModel):
     historical_congestion: float = Field(default=0.3, ge=0.0, le=1.0)
     speed_reliability: float = Field(default=0.5, ge=0.0, le=1.0)
 
+    @field_validator("congestion_index", "weather_severity", "road_risk_score", "historical_congestion", "speed_reliability", mode="before")
+    @classmethod
+    def clamp_unit_interval(cls, v: float | int | None) -> float:
+        if v is None:
+            return 0.0
+        return max(0.0, min(1.0, float(v)))
+
 
 class CombinedFeatureVector(BaseModel):
     """Complete feature vector fed to prediction models."""
@@ -327,6 +334,14 @@ class CombinedFeatureVector(BaseModel):
             self.context.historical_speed_kph,
             self.context.historical_congestion,
             self.context.speed_reliability,
+            # Extended features (from literature)
+            getattr(self.context, 'road_type_encoded', 1.0),
+            getattr(self.context, 'highway_percentage', 0.5),
+            getattr(self.context, 'route_curvature', 0.1),
+            getattr(self.context, 'intersection_count', 5.0),
+            getattr(self.context, 'toll_roads', 0.0),
+            getattr(self.context, 'urban_density', 0.3),
+            getattr(self.context, 'distance_category', 1.0),
         ]
 
     @property
@@ -342,6 +357,8 @@ class CombinedFeatureVector(BaseModel):
             "incident_proximity", "event_proximity", "road_risk_score",
             "road_closure_active", "roadworks_active", "accident_active",
             "historical_speed_kph", "historical_congestion", "speed_reliability",
+            "road_type_encoded", "highway_percentage", "route_curvature",
+            "intersection_count", "toll_roads", "urban_density", "distance_category",
         ]
 
 

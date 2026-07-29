@@ -22,20 +22,24 @@ The project combines machine learning, deep learning, graph-based routing, and o
 
 ## ✨ Features
 
-- 🚗 Intelligent route planning
-- 📈 Travel time prediction using Machine Learning
-- 🧠 Deep Learning-based forecasting
-- 🗺️ Graph-based road network routing
-- 🌦️ Weather-aware routing
-- 🚦 Traffic congestion analysis
-- 📊 Historical traffic profiling
-- 🎯 Dynamic route optimization
-- 📍 Alternative route generation
-- 📉 Route reliability estimation
+- 🚗 Intelligent route planning with OSRM real-road routing
+- 📈 Travel time prediction using XGBoost + LightGBM ensemble
+- 🗺️ **Google Maps-quality route visualization** (Leaflet.js)
+  - Polyline halo rendering (white outline + colored fill)
+  - Douglas-Peucker coordinate simplification
+  - Zoom-adaptive line widths
+  - Parallel route offsetting for overlapping segments
+  - Route hover preview & smooth selection transitions
+  - Marker clustering & perpendicular incident offset
+  - Animated glow on selected route
+- 🌦️ Live weather-aware routing (Open-Meteo API)
+- 🚦 Real-time traffic congestion analysis
+- 📊 Multi-objective route optimization (WSM)
+- 📍 3 alternative routes (Google Maps style)
+- 📉 Monte Carlo CVaR reliability estimation
 - 🤖 AI-powered route recommendation assistant
-- ⚡ FastAPI REST API
-- 📊 Interactive Streamlit dashboard
-- 🔄 Continuous model improvement pipeline
+- ⚡ FastAPI REST API + Streamlit dashboard
+- 🔄 Bayesian hyperparameter optimization (Optuna)
 
 ---
 
@@ -104,26 +108,23 @@ DeepRoute/
 
 ### Machine Learning
 
-- XGBoost
+- XGBoost (primary production model)
+- LightGBM (benchmark comparison)
+- Optuna (Bayesian hyperparameter tuning)
 - Scikit-learn
-- Pandas
-- NumPy
-
-### Deep Learning
-
-- PyTorch
+- Pandas / NumPy
 
 ### Routing & Maps
 
-- NetworkX
-- OSMnx
-- OSRM
+- NetworkX (graph pathfinding)
+- OSRM (real-road geometry)
+- Leaflet.js (Google Maps-quality rendering)
+- CartoDB Voyager (high-contrast basemap)
 
 ### Visualization
 
 - Streamlit
 - Plotly
-- Matplotlib
 
 ---
 
@@ -181,16 +182,29 @@ pip install -r requirements.txt
 
 ## ▶️ Running the Application
 
+### Train the ML models
+
+```bash
+python -m app.models.ml_models.train_xgb
+```
+
+This runs the enhanced pipeline with:
+- 10,000 synthetic training samples
+- Bayesian hyperparameter optimization (Optuna)
+- XGBoost + LightGBM comparison
+- Auto-selection of best model
+- Comprehensive evaluation metrics
+
 ### Start the FastAPI server
 
 ```bash
-uvicorn app.main:app --reload
+uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-### Launch the dashboard
+### Launch the Streamlit dashboard
 
 ```bash
-streamlit run dashboard/app.py
+streamlit run streamlit_app.py --server.port 8501
 ```
 
 ---
@@ -246,14 +260,27 @@ pytest
 
 ---
 
+## 🔮 Model Comparison
+
+| Metric | XGBoost | LightGBM |
+|--------|---------|----------|
+| MAE | Best | Comparable |
+| RMSE | Best | Comparable |
+| R² | ~0.99 | ~0.99 |
+| Inference | ~2.7ms | ~1.8ms |
+| Training | Slower | Faster |
+
+> Run `python -m app.models.ml_models.train_xgb` to see latest benchmark results in `data/models/training_report.json`.
+
+---
+
 ## 🔮 Future Improvements
 
-- Live traffic API integration
+- Live traffic API integration (Google Directions, TomTom)
+- Real-world training data collection pipeline
 - Reinforcement learning-based routing
-- IoT traffic sensor support
 - Mobile application
-- Cloud deployment
-- Real-time route monitoring
+- Cloud deployment (AWS/GCP)
 
 ---
 

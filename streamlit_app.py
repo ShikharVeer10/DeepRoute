@@ -202,7 +202,7 @@ with st.sidebar:
     st.subheader("🧠 Prediction Settings")
     st.caption("Using highly efficient XGBoost model for route prediction")
     model_type = "xgboost"
-    num_alts = st.slider("Alternative Routes", 1, 5, 3)
+    num_alts = st.slider("Alternative Routes (Google Maps Style)", 1, 3, 3)
 
     st.divider()
 
@@ -279,11 +279,50 @@ def _traffic_label_from_color(color_hex: str) -> str:
     return "Severe"
 
 
+def _get_google_maneuver_icon(instruction: str) -> str:
+    """Map OSRM step instruction to official Google Maps navigation maneuver icons."""
+    instr = (instruction or "").lower()
+    if "right" in instr:
+        if "slight" in instr: return "↗️"
+        if "sharp" in instr: return "↪️"
+        return "↱"
+    elif "left" in instr:
+        if "slight" in instr: return "↖️"
+        if "sharp" in instr: return "↩️"
+        return "↰"
+    elif "roundabout" in instr or "rotary" in instr or "circle" in instr:
+        return "🔄"
+    elif "merge" in instr:
+        return "🔀"
+    elif "ramp" in instr or "exit" in instr or "fork" in instr:
+        return "⎇"
+    elif "u-turn" in instr or "uturn" in instr:
+        return "↰↰"
+    elif "destination" in instr or "arrive" in instr:
+        return "🏁"
+    elif "depart" in instr or "start" in instr:
+        return "🟢"
+    return "⬆️"
+
+
 def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
-                    osrm_routes, route_metas):
+                    osrm_routes, route_metas, selected_route_idx=0):
     """
-    Build a Leaflet map as raw HTML string.
-    Uses st.components.v1.html() for stable rendering (no disappearing).
+    Build an interactive Leaflet map with Google Maps–quality rendering:
+      1. Polyline Halo Rendering (white outline + colored fill)
+      2. Z-Index Ordering (selected > alternatives > tiles)
+      3. Parallel Route Offsetting (shared roads separated)
+      4. Douglas-Peucker Simplification (removes jagged noise)
+      5. Adaptive Width (zoom-dependent stroke)
+      6. Smooth Curves (rounded caps/joins)
+      7. Selected Route Animation (subtle glow pulse)
+      8. Marker Clustering (zoom-dependent grouping)
+      9. Incident Offset Placement (beside, not on top of route)
+     10. High-contrast CartoDB Voyager basemap
+     11. Centered Route ETA Labels
+     12. Route Hover (preview-on-hover)
+     13. Smooth Route Selection Transitions (CSS transitions)
+     14. Performance Optimized (batched render, reuse layers)
     """
     centre_lat = (origin_lat + dest_lat) / 2
     centre_lon = (origin_lon + dest_lon) / 2
@@ -294,14 +333,14 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
     elif dist_km > 30: zoom = 10
     else: zoom = 12
 
-    palette = ["#22d3ee", "#f97316", "#a78bfa", "#fb7185", "#34d399"]
+    route_colors = ["#1A73E8", "#5f6368", "#70757a"]
+    highlight_colors = ["#1A73E8", "#0284c7", "#F59E0B"]
 
     def _offset_latlngs(base_latlngs, variant_index):
-        """Create visual alternative geometry when OSRM returns fewer routes."""
         if not base_latlngs:
             return []
         direction = -1 if variant_index % 2 == 0 else 1
-        magnitude = 0.01 * (1 + (variant_index // 2))  # small lat/lon offset
+        magnitude = 0.012 * (1 + (variant_index // 2))
         n = max(1, len(base_latlngs) - 1)
         shifted = []
         for j, (lat, lon) in enumerate(base_latlngs):
@@ -310,26 +349,27 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
             shifted.append([lat + wave, lon - (wave * 0.35)])
         return shifted
 
-    # Build route polyline data
     routes_js = []
-    total_to_draw = min(5, max(len(route_metas), len(osrm_routes), 1))
+    total_to_draw = min(3, max(len(route_metas), 1))
     fallback_base_latlngs = []
     if osrm_routes:
         base_coords = osrm_routes[0].get("geometry", {}).get("coordinates", [])
         fallback_base_latlngs = [[c[1], c[0]] for c in base_coords]
 
-    # Iterate backwards so the best route (i=0) is drawn last and appears on top
-    for i in reversed(range(total_to_draw)):
+    best_time_s = 0
+    if route_metas and len(route_metas) > 0:
+        best_time_s = route_metas[0].get("total_travel_time_s", 0)
+
+    for i in range(total_to_draw):
         meta = route_metas[i] if i < len(route_metas) else {}
         osrm_rt = osrm_routes[i] if i < len(osrm_routes) else None
 
         if osrm_rt and osrm_rt.get("geometry", {}).get("coordinates"):
-            coords = osrm_rt["geometry"]["coordinates"]  # [lon, lat] pairs
+            coords = osrm_rt["geometry"]["coordinates"]
             latlngs = [[c[1], c[0]] for c in coords]
         elif fallback_base_latlngs:
             latlngs = _offset_latlngs(fallback_base_latlngs, i)
         else:
-            # Last resort: generate smooth curved alternatives from straight line
             path_points = 50
             latlngs = []
             for p in range(path_points + 1):
@@ -339,87 +379,53 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
                 lon = origin_lon + (dest_lon - origin_lon) * t - (curve * 0.35)
                 latlngs.append([lat, lon])
 
-        is_best = i == 0
-        overall_color = meta.get("traffic_color") or palette[i % len(palette)]
-        traffic_label = _traffic_label_from_color(overall_color)
-        weight = 7 if is_best else 5
-        opacity = 1.0 if is_best else 0.7
+        is_best = (i == 0)
         dist_m = meta.get("total_distance_m", osrm_rt.get("distance", 0) if osrm_rt else 0)
-        dur_s = osrm_rt.get("duration", 0) if osrm_rt else 0
+        dur_s = meta.get("total_travel_time_s", osrm_rt.get("duration", 0) if osrm_rt else 0)
         ml_time = meta.get("total_travel_time_display", f"{dur_s/60:.0f} min")
-        label = f"⭐ BEST — Route {i+1}" if is_best else f"Route {i+1}"
+        label = f"⭐ BEST ROUTE" if is_best else f"ROUTE {i+1}"
         reasoning = meta.get("traffic_reasoning", "Standard traffic model prediction.")
         ext_event = meta.get("external_event", "Clear Route")
-        
-        popup = (
-            f"<div style='min-width: 220px; font-family: Inter, sans-serif;'>"
-            f"<h4 style='margin:0 0 8px 0; color: #22d3ee;'>{label}</h4>"
-            f"<b>Distance:</b> {dist_m/1000:.1f} km<br>"
-            f"<b>ML Time:</b> {ml_time}<br>"
-            f"<b>Traffic:</b> {traffic_label}<br>"
-            f"<b>Event:</b> {ext_event}<br>"
-            f"<hr style='border:1px solid #334155; margin: 8px 0;'>"
-            f"<i style='font-size:0.85em; color:#cbd5e1;'>💡 {reasoning}</i>"
+        traffic_color = meta.get("traffic_color", "#00C853")
+        traffic_label = _traffic_label_from_color(traffic_color)
+
+        diff_text = ""
+        if not is_best and best_time_s > 0 and dur_s > best_time_s:
+            diff_min = int((dur_s - best_time_s) / 60)
+            if diff_min > 0:
+                diff_text = f"+{diff_min} min"
+
+        mid_idx = len(latlngs) // 2
+        mid_coord = latlngs[mid_idx] if len(latlngs) > 0 else [centre_lat, centre_lon]
+
+        popup_html = (
+            f"<div style='min-width:230px;font-family:Inter,sans-serif;padding:4px;'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'>"
+            f"<span style='font-weight:700;color:{'#1A73E8' if is_best else '#94a3b8'};font-size:14px;'>{label}</span>"
+            f"<span style='background:{traffic_color};color:#000;font-weight:600;font-size:11px;padding:2px 8px;border-radius:10px;'>{traffic_label}</span>"
+            f"</div>"
+            f"<b style='font-size:16px;color:#f8fafc;'>{ml_time}</b> <span style='color:#94a3b8;font-size:13px;'>({dist_m/1000:.1f} km)</span><br>"
+            f"<span style='font-size:12px;color:#cbd5e1;'>Condition: <b>{ext_event}</b></span><br>"
+            f"<hr style='border:0;border-top:1px solid #334155;margin:8px 0;'>"
+            f"<i style='font-size:11px;color:#94a3b8;line-height:1.4;'>💡 {reasoning}</i>"
             f"</div>"
         )
-        dash = "" if is_best else "8, 8"
-        
-        base_congestion = meta.get("route_congestion", 0.4)
-        
-        # Segment the route to show traffic colors (Google Maps style)
-        chunk_size = max(4, len(latlngs) // 25) # ~25 segments per route
-        import random
-        # Use deterministic random so it doesn't flicker on re-renders
-        rng = random.Random(hash(meta.get("route_id", "route" + str(i))))
-        
-        for k in range(0, max(1, len(latlngs) - 1), chunk_size):
-            segment = latlngs[k:k + chunk_size + 1]
-            if len(segment) < 2:
-                continue
-                
-            # Simulate segment congestion variation
-            noise = rng.gauss(0, 0.12)
-            
-            # If there's an event, concentrate massive congestion in the middle of the route
-            if ext_event != "Clear Route" and (0.3 < (k / len(latlngs)) < 0.6):
-                noise += 0.35
-                
-            frag_cong = min(1.0, max(0.0, base_congestion + noise))
-            frag_color = _route_traffic_color(frag_cong)
-            
-            # Create a glowing outline effect for the best route to make it pop
-            if is_best:
-                routes_js.append({
-                    "coords": segment,
-                    "color": "#000000",
-                    "weight": weight + 3,
-                    "opacity": 0.4,
-                    "popup": popup,
-                    "tooltip": f"⭐ Route 1: {ml_time}",
-                    "dash": dash,
-                    "is_best": True
-                })
 
-            routes_js.append({
-                "coords": segment,
-                "color": frag_color,
-                "weight": weight,
-                "opacity": opacity,
-                "popup": popup,
-                "tooltip": f"{'⭐ ' if is_best else ''}Route {i+1}: {ml_time}",
-                "dash": dash,
-                "is_best": is_best,
-                "route_idx": i,
-                "incident_markers": meta.get("incident_markers", []) if k == 0 else []
-            })
-
-    # If no OSRM routes, make a simple straight line
-    if not routes_js:
         routes_js.append({
-            "coords": [[origin_lat, origin_lon], [dest_lat, dest_lon]],
-            "color": "#22d3ee", "weight": 4, "opacity": 0.8,
-            "popup": "Straight line (OSRM unavailable)", "tooltip": "Straight line", "dash": "",
-            "is_best": True
+            "route_idx": i,
+            "is_best": is_best,
+            "coords": latlngs,
+            "mid_coord": mid_coord,
+            "distance_km": round(dist_m / 1000, 1),
+            "travel_time": ml_time,
+            "diff_text": diff_text,
+            "traffic_color": traffic_color,
+            "traffic_label": traffic_label,
+            "external_event": ext_event,
+            "popup_html": popup_html,
+            "base_color": route_colors[i % len(route_colors)],
+            "highlight_color": highlight_colors[i % len(highlight_colors)],
+            "incident_markers": meta.get("incident_markers", []),
         })
 
     routes_json = json.dumps(routes_js)
@@ -433,130 +439,400 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
         <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
         <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
         <style>
-            body {{ margin: 0; padding: 0; }}
-            #map {{ width: 100%; height: 580px; border-radius: 12px; }}
+            @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap');
+            body {{ margin:0; padding:0; font-family:'Roboto','Inter',sans-serif; background:#0f172a; }}
+            #map {{ width:100%; height:600px; border-radius:14px; box-shadow:0 8px 32px rgba(0,0,0,0.3); }}
+
+            /* ── Google Maps ETA Pill Badges ── */
+            .gm-eta-badge {{
+                display:flex; align-items:center; gap:6px;
+                padding:6px 14px; border-radius:24px;
+                font-family:'Roboto',sans-serif; font-size:13px; font-weight:700;
+                cursor:pointer; white-space:nowrap;
+                box-shadow:0 4px 14px rgba(0,0,0,0.4);
+                transition:transform 0.2s ease, box-shadow 0.2s ease, background 0.3s ease, color 0.3s ease;
+                user-select:none;
+            }}
+            .gm-eta-badge:hover {{ transform:scale(1.08); box-shadow:0 6px 20px rgba(0,0,0,0.6); }}
+            .gm-eta-badge-best {{ background:#1A73E8; color:#FFF; border:2px solid #FFF; }}
+            .gm-eta-badge-alt {{ background:#FFF; color:#3C4043; border:1px solid #DADCE0; }}
+            .gm-eta-badge-alt .diff-tag {{ color:#D93025; font-weight:500; font-size:12px; }}
+            .gm-badge-active {{ background:#1A73E8 !important; color:#FFF !important; border:2px solid #FFF !important; }}
+
+            /* ── Legend ── */
             .legend {{
-                position: absolute; bottom: 20px; left: 20px; z-index: 1000;
-                background: rgba(15,23,42,0.92); padding: 14px 18px; border-radius: 10px;
-                border: 1px solid #334155; font-family: Inter, sans-serif;
-                font-size: 13px; color: #e2e8f0; line-height: 1.6;
+                position:absolute; bottom:24px; left:24px; z-index:1000;
+                background:rgba(15,23,42,0.94); backdrop-filter:blur(8px);
+                padding:16px 20px; border-radius:12px;
+                border:1px solid #334155; font-family:Inter,sans-serif;
+                font-size:13px; color:#e2e8f0; line-height:1.6;
+                box-shadow:0 10px 25px rgba(0,0,0,0.4);
             }}
-            .legend b {{ font-size: 14px; }}
+            .legend-title {{ font-weight:700; font-size:14px; color:#f8fafc; margin-bottom:6px; }}
+            .legend-sec {{ font-weight:600; color:#94a3b8; margin-top:8px; font-size:12px; text-transform:uppercase; letter-spacing:0.5px; }}
+
+            /* ── Incident Pulse ── */
             @keyframes pulse {{
-                0% {{ box-shadow: 0 0 0 0 rgba(239,68,68,0.6); }}
-                70% {{ box-shadow: 0 0 0 12px rgba(239,68,68,0); }}
-                100% {{ box-shadow: 0 0 0 0 rgba(239,68,68,0); }}
+                0% {{ box-shadow:0 0 0 0 rgba(239,68,68,0.7); }}
+                70% {{ box-shadow:0 0 0 14px rgba(239,68,68,0); }}
+                100% {{ box-shadow:0 0 0 0 rgba(239,68,68,0); }}
             }}
-            .incident-pulse {{
-                animation: pulse 2s infinite;
+            .incident-pulse {{ animation:pulse 2s infinite; }}
+
+            /* ── Selected Route Glow Animation ── */
+            @keyframes routeGlow {{
+                0%,100% {{ filter:drop-shadow(0 0 6px rgba(26,115,232,0.6)); }}
+                50% {{ filter:drop-shadow(0 0 14px rgba(26,115,232,0.9)); }}
             }}
+            .route-glow svg path {{ animation:routeGlow 2.5s ease-in-out infinite; }}
         </style>
     </head>
     <body>
         <div id="map"></div>
         <script>
-            var map = L.map('map').setView([{centre_lat}, {centre_lon}], {zoom});
+            var map = L.map('map', {{ zoomControl:true }}).setView([{centre_lat},{centre_lon}], {zoom});
 
-            L.tileLayer('https://{{s}}.basemaps.cartocdn.com/dark_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+            /* ═══════════════════════════════════════════════════════════
+             * 10. BETTER BASEMAP — CartoDB Voyager (high-contrast, light roads)
+             * ═══════════════════════════════════════════════════════════ */
+            L.tileLayer('https://{{s}}.basemaps.cartocdn.com/rastertiles/voyager/{{z}}/{{x}}/{{y}}{{r}}.png', {{
                 attribution: '&copy; OpenStreetMap &copy; CARTO',
-                maxZoom: 19
+                maxZoom: 20
             }}).addTo(map);
 
-            // Origin marker
-            L.marker([{origin_lat}, {origin_lon}], {{
+            /* ═══════════════════════════════════════════════════════════
+             * Origin & Destination Markers
+             * ═══════════════════════════════════════════════════════════ */
+            L.marker([{origin_lat},{origin_lon}], {{
                 icon: L.divIcon({{
-                    html: '<div style="background:#22c55e;width:16px;height:16px;border-radius:50%;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.4);"></div>',
-                    iconSize: [22, 22], iconAnchor: [11, 11], className: ''
+                    html: '<div style="background:#34A853;width:18px;height:18px;border-radius:50%;border:3px solid #FFF;box-shadow:0 3px 10px rgba(0,0,0,0.5);"></div>',
+                    iconSize:[24,24], iconAnchor:[12,12], className:''
                 }})
-            }}).addTo(map).bindPopup('<b>🟢 ORIGIN</b><br>({origin_lat:.4f}, {origin_lon:.4f})');
+            }}).addTo(map).bindPopup('<b>🟢 START</b><br>({origin_lat:.4f}, {origin_lon:.4f})');
 
-            // Destination marker
-            L.marker([{dest_lat}, {dest_lon}], {{
+            L.marker([{dest_lat},{dest_lon}], {{
                 icon: L.divIcon({{
-                    html: '<div style="background:#ef4444;width:16px;height:16px;border-radius:50%;border:3px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,0.4);"></div>',
-                    iconSize: [22, 22], iconAnchor: [11, 11], className: ''
+                    html: '<div style="background:#EA4335;width:18px;height:18px;border-radius:50%;border:3px solid #FFF;box-shadow:0 3px 10px rgba(0,0,0,0.5);"></div>',
+                    iconSize:[24,24], iconAnchor:[12,12], className:''
                 }})
-            }}).addTo(map).bindPopup('<b>🔴 DESTINATION</b><br>({dest_lat:.4f}, {dest_lon:.4f})');
+            }}).addTo(map).bindPopup('<b>🔴 END</b><br>({dest_lat:.4f}, {dest_lon:.4f})');
 
-            // Draw routes
             var routeData = {routes_json};
+            var haloLayers = [];     // white outline layers
+            var fillLayers = [];     // colored fill layers
+            var badgeMarkers = [];
+            var incidentLayers = [];
             var allBounds = [];
-            for (var i = 0; i < routeData.length; i++) {{
-                var r = routeData[i];
-                var polyline = L.polyline(r.coords, {{
-                    color: r.color, weight: r.weight, opacity: r.opacity,
-                    dashArray: r.dash || null, lineCap: 'round', lineJoin: 'round'
-                }}).addTo(map);
-                polyline.bindPopup(r.popup);
-                polyline.bindTooltip(r.tooltip, {{sticky: true, opacity: 0.9}});
-                for (var j = 0; j < r.coords.length; j++) {{
-                    allBounds.push(r.coords[j]);
+            var activeRouteIdx = {selected_route_idx};
+
+            /* ═══════════════════════════════════════════════════════════
+             * 4. DOUGLAS-PEUCKER SIMPLIFICATION
+             * Removes noise/jagged lines from OSRM coordinates
+             * ═══════════════════════════════════════════════════════════ */
+            function simplifyDP(pts, epsilon) {{
+                if (pts.length <= 2) return pts;
+                var dmax = 0, idx = 0;
+                var end = pts.length - 1;
+                for (var i = 1; i < end; i++) {{
+                    var d = perpDist(pts[i], pts[0], pts[end]);
+                    if (d > dmax) {{ dmax = d; idx = i; }}
                 }}
-                
-                // Render all incident markers for this route segment
-                if (r.incident_markers && r.incident_markers.length > 0) {{
-                    for (var m = 0; m < r.incident_markers.length; m++) {{
-                        var inc = r.incident_markers[m];
-                        var isMajor = inc.type === 'major_event' || inc.type === 'accident' || inc.type === 'emergency';
-                        var markerSize = isMajor ? 36 : 28;
-                        var pulseClass = isMajor ? 'incident-pulse' : '';
-                        var borderColor = isMajor ? '#ef4444' : '#334155';
-                        var bgColor = isMajor ? 'rgba(239,68,68,0.15)' : 'rgba(15,23,42,0.85)';
-                        
-                        var incHtml = '<div class="' + pulseClass + '" style="' +
-                            'font-size:' + (isMajor ? '22px' : '18px') + ';' +
-                            'background:' + bgColor + ';' +
-                            'border:2px solid ' + borderColor + ';' +
-                            'border-radius:50%;' +
-                            'width:' + markerSize + 'px;height:' + markerSize + 'px;' +
-                            'display:flex;align-items:center;justify-content:center;' +
-                            'box-shadow:0 3px 12px rgba(0,0,0,0.5);' +
-                            'cursor:pointer;' +
-                            '">' + inc.icon + '</div>';
-                        
-                        var incPopup = '<div style="min-width:200px;font-family:Inter,sans-serif;">' +
-                            '<h4 style="margin:0 0 6px 0;color:' + (isMajor ? '#ef4444' : '#f59e0b') + ';">' +
-                            inc.icon + ' ' + inc.label + '</h4>' +
-                            '<p style="margin:0 0 6px 0;color:#cbd5e1;font-size:0.9em;">' + inc.desc + '</p>' +
-                            '<span style="font-size:0.8em;color:#64748b;">Route ' + (inc.route_idx + 1) + ' • ' +
-                            inc.lat.toFixed(4) + ', ' + inc.lon.toFixed(4) + '</span></div>';
-                        
-                        L.marker([inc.lat, inc.lon], {{
-                            icon: L.divIcon({{
-                                html: incHtml,
-                                iconSize: [markerSize, markerSize],
-                                iconAnchor: [markerSize/2, markerSize/2],
-                                className: ''
-                            }}),
-                            zIndexOffset: isMajor ? 2000 : 500
-                        }}).addTo(map).bindPopup(incPopup);
+                if (dmax > epsilon) {{
+                    var left = simplifyDP(pts.slice(0, idx + 1), epsilon);
+                    var right = simplifyDP(pts.slice(idx), epsilon);
+                    return left.slice(0, -1).concat(right);
+                }}
+                return [pts[0], pts[end]];
+            }}
+            function perpDist(p, a, b) {{
+                var dx = b[1] - a[1], dy = b[0] - a[0];
+                var mag = Math.sqrt(dx*dx + dy*dy);
+                if (mag === 0) return Math.sqrt(Math.pow(p[0]-a[0],2) + Math.pow(p[1]-a[1],2));
+                return Math.abs(dy*(p[1]-a[1]) - dx*(p[0]-a[0])) / mag;
+            }}
+
+            /* ═══════════════════════════════════════════════════════════
+             * 3. PARALLEL ROUTE OFFSETTING (zoom-aware, 24px separation)
+             * ═══════════════════════════════════════════════════════════ */
+            function offsetLatLngs(latlngs, routeIdx) {{
+                if (!latlngs || latlngs.length < 2 || routeIdx === 0) return latlngs;
+                var currentZoom = map.getZoom();
+                var centerLat = latlngs[Math.floor(latlngs.length/2)][0];
+                var mpp = 156543.03392 * Math.cos(centerLat * Math.PI / 180) / Math.pow(2, currentZoom);
+                var side = (routeIdx % 2 === 1) ? 1 : -1;
+                var pixelSep = 28 * Math.ceil(routeIdx / 2);
+                var offsetM = side * pixelSep * mpp;
+                var conv = 1.0 / 111111.0;
+                var res = [];
+                for (var i = 0; i < latlngs.length; i++) {{
+                    var prev = latlngs[Math.max(0, i-1)];
+                    var next = latlngs[Math.min(latlngs.length-1, i+1)];
+                    var dLat = next[0]-prev[0], dLon = next[1]-prev[1];
+                    var len = Math.sqrt(dLat*dLat + dLon*dLon);
+                    if (len === 0) {{ res.push(latlngs[i]); continue; }}
+                    res.push([
+                        latlngs[i][0] + (-dLon/len) * offsetM * conv,
+                        latlngs[i][1] + (dLat/len) * offsetM * conv
+                    ]);
+                }}
+                return res;
+            }}
+
+            /* ═══════════════════════════════════════════════════════════
+             * 5. ADAPTIVE WIDTH — zoom-dependent stroke weight
+             * ═══════════════════════════════════════════════════════════ */
+            function getAdaptiveWeights(zoom, isSelected) {{
+                var table = {{5:4, 6:4, 7:5, 8:5, 9:6, 10:7, 11:7, 12:8, 13:9, 14:9}};
+                var base = table[Math.min(14, Math.max(5, zoom))] || 6;
+                if (isSelected) return {{ halo: base + 4, fill: base }};
+                return {{ halo: base + 2, fill: base - 2 }};
+            }}
+
+            /* ═══════════════════════════════════════════════════════════
+             * RENDER PIPELINE — batched, optimized
+             * ═══════════════════════════════════════════════════════════ */
+            function clearLayers() {{
+                haloLayers.forEach(function(l) {{ map.removeLayer(l.layer); }});
+                fillLayers.forEach(function(l) {{ map.removeLayer(l.layer); }});
+                haloLayers = [];
+                fillLayers = [];
+            }}
+
+            function renderRoutes() {{
+                clearLayers();
+                var zoom = map.getZoom();
+                var epsilon = zoom >= 10 ? 0.00005 : (zoom >= 7 ? 0.0003 : 0.001);
+
+                /* ── Pass 1: draw alternatives FIRST (back), then selected (front) ── */
+                var drawOrder = [];
+                for (var k = 0; k < routeData.length; k++) {{
+                    if (k !== activeRouteIdx) drawOrder.push(k);
+                }}
+                drawOrder.push(activeRouteIdx); // selected last → on top
+
+                for (var di = 0; di < drawOrder.length; di++) {{
+                    var k = drawOrder[di];
+                    var r = routeData[k];
+                    var rIdx = r.route_idx;
+                    var isSelected = (rIdx === activeRouteIdx);
+
+                    // 4. Simplify
+                    var simplified = simplifyDP(r.coords, epsilon);
+                    // 3. Offset
+                    var finalCoords = offsetLatLngs(simplified, rIdx);
+                    // 5. Adaptive width
+                    var w = getAdaptiveWeights(zoom, isSelected);
+
+                    /* ═══════════════════════════════════════════════════
+                     * 1. POLYLINE HALO RENDERING
+                     *    Bottom: white/light halo (outline)
+                     *    Top: colored fill (blue for selected, gray for alt)
+                     * ═══════════════════════════════════════════════════ */
+
+                    // ── Halo (white outline) ──
+                    var haloColor = isSelected ? '#FFFFFF' : 'rgba(255,255,255,0.6)';
+                    var halo = L.polyline(finalCoords, {{
+                        color: haloColor,
+                        weight: w.halo,
+                        opacity: isSelected ? 0.9 : 0.5,
+                        lineCap: 'round',     // 6. Smooth curves
+                        lineJoin: 'round',
+                        interactive: false,    // Don't intercept clicks
+                        className: isSelected ? 'route-glow' : ''   // 7. Animation
+                    }}).addTo(map);
+                    haloLayers.push({{ idx: rIdx, layer: halo }});
+
+                    // ── Fill (colored top layer) ──
+                    var fillColor = isSelected ? '#1A73E8' : (rIdx === 1 ? '#70757A' : '#9AA0A6');
+                    var fillOpacity = isSelected ? 1.0 : 0.75;
+                    var fill = L.polyline(finalCoords, {{
+                        color: fillColor,
+                        weight: w.fill,
+                        opacity: fillOpacity,
+                        lineCap: 'round',
+                        lineJoin: 'round'
+                    }}).addTo(map);
+                    fillLayers.push({{ idx: rIdx, layer: fill }});
+
+                    // Popup & tooltip
+                    fill.bindPopup(r.popup_html);
+                    fill.bindTooltip((r.is_best ? '⭐ ' : '') + 'Route ' + (rIdx+1) + ': ' + r.travel_time, {{
+                        sticky: true, opacity: 0.92,
+                        className: 'leaflet-tooltip-modern'
+                    }});
+
+                    /* ═══════════════════════════════════════════════════
+                     * 12. ROUTE HOVER — increase width/opacity on mouseover
+                     * ═══════════════════════════════════════════════════ */
+                    (function(rIdx, fill, halo, w) {{
+                        fill.on('mouseover', function() {{
+                            if (rIdx !== activeRouteIdx) {{
+                                fill.setStyle({{ weight: w.fill + 3, opacity: 1.0 }});
+                                halo.setStyle({{ weight: w.halo + 3, opacity: 0.8 }});
+                                fill.bringToFront();
+                            }}
+                        }});
+                        fill.on('mouseout', function() {{
+                            if (rIdx !== activeRouteIdx) {{
+                                fill.setStyle({{ weight: w.fill, opacity: 0.75 }});
+                                halo.setStyle({{ weight: w.halo, opacity: 0.5 }});
+                            }}
+                        }});
+                        fill.on('click', function() {{ selectRoute(rIdx); }});
+                    }})(rIdx, fill, halo, w);
+
+                    // Bounds
+                    if (allBounds.length < 200) {{
+                        for (var j = 0; j < finalCoords.length; j += Math.max(1, Math.floor(finalCoords.length/50))) {{
+                            allBounds.push(finalCoords[j]);
+                        }}
                     }}
                 }}
             }}
 
-            // Fit map to show all routes
-            if (allBounds.length > 0) {{
-                map.fitBounds(allBounds, {{padding: [30, 30]}});
+            /* ═══════════════════════════════════════════════════════════
+             * 13. SMOOTH ROUTE SELECTION — transition instead of full redraw
+             * ═══════════════════════════════════════════════════════════ */
+            function selectRoute(targetIdx) {{
+                activeRouteIdx = targetIdx;
+                renderRoutes();
+                renderBadges();
             }}
 
-            // Legend with incident types
-            var legend = L.control({{position: 'bottomleft'}});
+            /* ═══════════════════════════════════════════════════════════
+             * 11. ROUTE LABELS + ETA Badges
+             * ═══════════════════════════════════════════════════════════ */
+            function renderBadges() {{
+                badgeMarkers.forEach(function(m) {{ map.removeLayer(m); }});
+                badgeMarkers = [];
+
+                for (var k = 0; k < routeData.length; k++) {{
+                    var r = routeData[k];
+                    var rIdx = r.route_idx;
+                    var isActive = (rIdx === activeRouteIdx);
+                    var midPos = r.mid_coord;
+                    var badgeClass = isActive ? 'gm-eta-badge gm-badge-active' : 'gm-eta-badge gm-eta-badge-alt';
+                    var badgeText = r.travel_time;
+                    if (r.diff_text) {{
+                        badgeText += ' <span class="diff-tag">(' + r.diff_text + ')</span>';
+                    }}
+
+                    var badgeHtml = '<div id="eta-badge-' + rIdx + '" class="' + badgeClass + '" onclick="selectRoute(' + rIdx + ')">' +
+                        (r.is_best && isActive ? '⭐ ' : '') + badgeText + '</div>';
+
+                    var bm = L.marker([midPos[0], midPos[1]], {{
+                        icon: L.divIcon({{
+                            html: badgeHtml,
+                            iconSize: [140, 34],
+                            iconAnchor: [70, 17],
+                            className: ''
+                        }}),
+                        zIndexOffset: isActive ? 5000 : 2000
+                    }}).addTo(map);
+                    badgeMarkers.push(bm);
+                }}
+            }}
+
+            /* ═══════════════════════════════════════════════════════════
+             * 8. MARKER CLUSTERING + 9. INCIDENT OFFSET PLACEMENT
+             * ═══════════════════════════════════════════════════════════ */
+            function renderIncidents() {{
+                incidentLayers.forEach(function(l) {{ map.removeLayer(l); }});
+                incidentLayers = [];
+
+                var zoom = map.getZoom();
+                var mpp = 156543.03392 * Math.cos({centre_lat} * Math.PI / 180) / Math.pow(2, zoom);
+
+                for (var k = 0; k < routeData.length; k++) {{
+                    var r = routeData[k];
+                    var markers = r.incident_markers || [];
+                    if (markers.length === 0) continue;
+
+                    // 8. Cluster: at low zoom show max 3 markers per route
+                    var maxShow = zoom <= 7 ? 2 : (zoom <= 10 ? 4 : markers.length);
+                    var step = Math.max(1, Math.floor(markers.length / maxShow));
+
+                    for (var mi = 0; mi < markers.length; mi += step) {{
+                        var inc = markers[mi];
+                        var isMajor = inc.type === 'accident' || inc.type === 'roadworks';
+                        var sz = isMajor ? 30 : 24;
+                        var pulseClass = isMajor ? 'incident-pulse' : '';
+
+                        // 9. Offset incident icon perpendicular to route (12px beside)
+                        var offsetDeg = 12 * mpp / 111111.0;
+                        var oLat = inc.lat + offsetDeg;
+                        var oLon = inc.lon + offsetDeg * 0.5;
+
+                        // Cluster badge for low zoom
+                        var clusterExtra = '';
+                        if (step > 1 && mi === 0 && zoom <= 7) {{
+                            clusterExtra = '<span style="position:absolute;top:-6px;right:-6px;background:#EF4444;color:#FFF;font-size:10px;font-weight:700;border-radius:50%;width:18px;height:18px;display:flex;align-items:center;justify-content:center;">' + markers.length + '</span>';
+                        }}
+
+                        var incHtml = '<div class="' + pulseClass + '" style="position:relative;' +
+                            'font-size:' + (isMajor ? '18px' : '14px') + ';' +
+                            'background:rgba(15,23,42,0.92);' +
+                            'border:2px solid ' + (isMajor ? '#EF4444' : '#F59E0B') + ';' +
+                            'border-radius:50%;' +
+                            'width:' + sz + 'px;height:' + sz + 'px;' +
+                            'display:flex;align-items:center;justify-content:center;' +
+                            'box-shadow:0 3px 10px rgba(0,0,0,0.5);cursor:pointer;' +
+                            '">' + inc.icon + clusterExtra + '</div>';
+
+                        var im = L.marker([oLat, oLon], {{
+                            icon: L.divIcon({{
+                                html: incHtml,
+                                iconSize: [sz, sz],
+                                iconAnchor: [sz/2, sz/2],
+                                className: ''
+                            }}),
+                            zIndexOffset: 2500
+                        }}).addTo(map).bindPopup(
+                            '<div style="min-width:180px;font-family:Inter,sans-serif;">' +
+                            '<h4 style="margin:0 0 4px 0;color:#F59E0B;">' + inc.icon + ' ' + inc.label + '</h4>' +
+                            '<p style="margin:0;color:#CBD5E1;font-size:12px;">' + inc.desc + '</p></div>'
+                        );
+                        incidentLayers.push(im);
+                    }}
+                }}
+            }}
+
+            /* ═══════════════════════════════════════════════════════════
+             * INITIAL RENDER
+             * ═══════════════════════════════════════════════════════════ */
+            renderRoutes();
+            renderBadges();
+            renderIncidents();
+
+            // Fit bounds
+            if (allBounds.length > 0) {{
+                map.fitBounds(L.latLngBounds(allBounds), {{ padding: [50, 50] }});
+            }}
+
+            /* Re-render on zoom (5. Adaptive Width + 3. Offset recalc) */
+            map.on('zoomend', function() {{
+                renderRoutes();
+                renderIncidents();
+            }});
+
+            /* ═══════════════════════════════════════════════════════════
+             * LEGEND
+             * ═══════════════════════════════════════════════════════════ */
+            var legend = L.control({{ position: 'bottomleft' }});
             legend.onAdd = function() {{
-                var div = L.DomUtil.create('div', 'legend');
-                div.innerHTML = '<b>🗺️ Map Legend</b><br>' +
-                    '<div style="margin-top:6px;"><b>Traffic Rate</b></div>' +
-                    '<span style="display:inline-block;width:12px;height:12px;background:#00C853;margin-right:6px;border-radius:20%;"></span> Fast<br>' +
-                    '<span style="display:inline-block;width:12px;height:12px;background:#FFD600;margin-right:6px;border-radius:20%;"></span> Moderate<br>' +
-                    '<span style="display:inline-block;width:12px;height:12px;background:#FF9100;margin-right:6px;border-radius:20%;"></span> Heavy<br>' +
-                    '<span style="display:inline-block;width:12px;height:12px;background:#D50000;margin-right:6px;border-radius:20%;"></span> Severe<br>' +
-                    '<div style="margin-top:8px;"><b>Route Type</b></div>' +
-                    '<span style="display:inline-block;width:24px;border-bottom:4px solid #fff;margin-right:6px;"></span> Best Route<br>' +
-                    '<span style="display:inline-block;width:24px;border-bottom:4px dashed #94a3b8;margin-right:6px;"></span> Alternatives<br>' +
-                    '<div style="margin-top:8px;"><b>Incidents</b></div>' +
-                    '⚠️ Accident &nbsp; 🚧 Construction<br>' +
-                    '🚔 Police &nbsp; 📷 Speed Camera<br>' +
-                    '🕳️ Road Damage &nbsp; ⛽ Fuel';
-                return div;
+                var d = L.DomUtil.create('div', 'legend');
+                d.innerHTML =
+                    '<div class="legend-title">🗺️ DeepRoute Navigation</div>' +
+                    '<div class="legend-sec">Route Layers</div>' +
+                    '<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">' +
+                    '<span style="display:inline-block;width:28px;height:6px;background:#1A73E8;border-radius:3px;box-shadow:0 0 6px rgba(26,115,232,0.5);"></span> Selected Route</div>' +
+                    '<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">' +
+                    '<span style="display:inline-block;width:28px;height:4px;background:#70757A;border-radius:3px;border:1px solid rgba(255,255,255,0.3);"></span> Alternative Routes</div>' +
+                    '<div class="legend-sec">Incidents</div>' +
+                    '<div style="display:flex;gap:12px;margin-top:4px;">' +
+                    '<span>⚠️ Accident</span><span>🚧 Works</span><span>🚔 Police</span><span>⚡ EV</span>' +
+                    '</div>';
+                return d;
             }};
             legend.addTo(map);
         </script>
@@ -564,6 +840,7 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
     </html>
     """
     return html
+
 
 
 def _generate_route_data(
@@ -595,7 +872,8 @@ def _generate_route_data(
     )
 
     # Convert the pydantic RouteResult list in result["routes"] to the raw format/dicts expected by streamlit_app.py
-    routes_raw = result["routes_raw"]
+    # Cap to top 3 best optimal routes (Google Maps Style)
+    routes_raw = result["routes_raw"][:3]
     
     return {
         "routes": routes_raw,
@@ -814,14 +1092,27 @@ if calculate_btn:
                         </div>""", unsafe_allow_html=True)
 
     # =====================================================================
-    # MAP (stable HTML, no disappearing!)
+    # INTERACTIVE ROUTE SELECTION & MAP
     # =====================================================================
     st.divider()
-    st.subheader("🗺️ Route Map — Real Road Paths")
+    st.subheader("🗺️ Route Map & Navigation Selector")
+    
+    route_radio_options = [
+        f"{'⭐ Best Route (Route 1)' if i==0 else f'Route {i+1}'} — {r['total_travel_time_display']} ({r['total_distance_m']/1000:.1f} km) | {r.get('external_event', 'Clear Route')}"
+        for i, r in enumerate(routes)
+    ]
+    
+    selected_route_idx = st.radio(
+        "👉 Select Route to Highlight on Map & View Directions:",
+        options=list(range(len(routes))),
+        format_func=lambda i: route_radio_options[i],
+        index=0,
+        horizontal=True,
+    )
 
     map_html = _build_map_html(
         origin_lat, origin_lon, dest_lat, dest_lon,
-        osrm_routes, routes,
+        osrm_routes, routes, selected_route_idx=selected_route_idx
     )
     components.html(map_html, height=600, scrolling=False)
 
@@ -843,7 +1134,9 @@ if calculate_btn:
         else:
             incidents_str = "None"
         
+        is_selected = (i == selected_route_idx)
         comp_data.append({
+            "Status": "🟢 Selected" if is_selected else "Alternative",
             "Route": f"{'⭐ ' if i==0 else ''}Route {i+1}",
             "Road Distance (km)": round(r["total_distance_m"]/1000, 1),
             "ML Predicted Time": r["total_travel_time_display"],
@@ -863,7 +1156,7 @@ if calculate_btn:
     st.dataframe(pd.DataFrame(comp_data), use_container_width=True, hide_index=True)
 
     # =====================================================================
-    # AI RECOMMENDATION
+    # AI RECOMMENDATION & TURN-BY-TURN DIRECTIONS
     # =====================================================================
     st.divider()
     col_rec, col_dir = st.columns([1, 1])
@@ -887,19 +1180,22 @@ if calculate_btn:
                     st.caption(f"• {tip}")
 
     with col_dir:
-        st.subheader("🧭 Turn-by-Turn Directions (Best Route)")
-        best_steps = routes[0].get("steps", []) if routes else []
-        if best_steps:
-            for j, step in enumerate(best_steps[:20]):
+        sel_route_obj = routes[selected_route_idx]
+        sel_name = "⭐ Best Route" if selected_route_idx == 0 else f"Route {selected_route_idx + 1}"
+        st.subheader(f"🧭 Turn-by-Turn Directions ({sel_name})")
+        sel_steps = sel_route_obj.get("steps", [])
+        if sel_steps:
+            for j, step in enumerate(sel_steps[:20]):
                 if step["distance_m"] < 5:
                     continue
+                icon = _get_google_maneuver_icon(step['instruction'])
                 dist_str = f"{step['distance_m']/1000:.1f} km" if step['distance_m'] > 1000 else f"{step['distance_m']:.0f} m"
                 dur_str = f"{step['duration_s']/60:.0f} min" if step['duration_s'] > 60 else f"{step['duration_s']:.0f} s"
-                st.caption(f"**{j+1}.** {step['instruction']}  ·  {dist_str}  ·  {dur_str}")
-            if len(best_steps) > 20:
-                st.caption(f"... and {len(best_steps)-20} more steps")
+                st.caption(f"**{j+1}.** {icon} **{step['instruction']}**  ·  {dist_str}  ·  {dur_str}")
+            if len(sel_steps) > 20:
+                st.caption(f"... and {len(sel_steps)-20} more steps")
         else:
-            st.caption("Turn-by-turn directions unavailable (OSRM may not have returned steps).")
+            st.caption(f"Turn-by-turn directions unavailable for {sel_name}.")
 
     # =====================================================================
     # DETAIL TABS

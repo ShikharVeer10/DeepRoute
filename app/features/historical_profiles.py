@@ -54,9 +54,6 @@ def get_congestion_color(congestion_index: float) -> str:
 
 
 def get_speed_color(speed_kph: float, speed_limit_kph: float = 50) -> str:
-    """
-    Map actual speed vs speed limit to traffic color.
-    """
     ratio = speed_kph / max(speed_limit_kph, 1)
 
     if ratio >= 0.85:

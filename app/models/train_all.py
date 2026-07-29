@@ -23,6 +23,8 @@ _FEATURE_NAMES = [
     "incident_proximity", "event_proximity", "road_risk_score",
     "road_closure_active", "roadworks_active", "accident_active",
     "historical_speed_kph", "historical_congestion", "speed_reliability",
+    "road_type_encoded", "highway_percentage", "route_curvature",
+    "intersection_count", "toll_roads", "urban_density", "distance_category",
 ]
 
 

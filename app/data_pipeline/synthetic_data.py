@@ -21,7 +21,7 @@ def _weekend_factor(day_of_week: int) -> float:
 
 
 def generate_training_data(
-    n_samples: int = 5000,
+    n_samples: int = 10000,
     n_segments: int = 100,
     seed: int = 42,
 ) -> pd.DataFrame:
@@ -85,9 +85,18 @@ def generate_training_data(
     hist_cong = np.clip(base_congestion + rng.normal(0, 0.15, n_samples), 0, 1)
     speed_rel = rng.uniform(0.4, 0.9, n_samples)
     
+    # Additional features from literature
+    road_type_enc = rng.choice([0, 1, 2, 3], size=n_samples, p=[0.1, 0.3, 0.4, 0.2]).astype(float)  # motorway=0, primary=1, secondary=2, residential=3
+    highway_pct = np.clip(1.0 - road_type_enc * 0.25 + rng.normal(0, 0.1, n_samples), 0, 1)
+    route_curvature = rng.exponential(0.15, n_samples)  # Higher = more curves
+    intersection_count = rng.poisson(5, n_samples).astype(float) * (1 + road_type_enc * 2)  # More in urban
+    toll_roads = (rng.random(n_samples) < (0.3 * highway_pct)).astype(float)
+    urban_density = np.clip(road_type_enc * 0.25 + rng.normal(0, 0.1, n_samples), 0, 1)
+    distance_category = rng.choice([0, 1, 2, 3], size=n_samples, p=[0.25, 0.35, 0.25, 0.15]).astype(float)  # short=0, medium=1, long=2, very_long=3
+    
     risk_score = np.clip(
         0.3 * congestion + 0.2 * weather_sev + 0.2 * (1 / (1 + incident_prox))
-        + 0.3 * accident_active + rng.normal(0, 0.03, n_samples),
+        + 0.3 * accident_active + 0.05 * urban_density + rng.normal(0, 0.03, n_samples),
         0, 1
     )
 
@@ -131,6 +140,13 @@ def generate_training_data(
     # Lane capacity effect (more lanes = slightly faster)
     lane_adj = (2 - num_lanes) * 0.02  # 1 lane: +0.02, 4 lanes: -0.04
     
+    # Road type / urbanization effects
+    urban_adj = urban_density * 0.03  # Urban areas are slower
+    curvature_adj = route_curvature * 0.02  # Curves slow you down
+    intersection_adj = np.clip(intersection_count / 50.0, 0, 0.04)  # Many intersections slow
+    highway_adj = -highway_pct * 0.02  # Highways are faster
+    toll_adj = -toll_roads * 0.01  # Toll roads are maintained better
+    
     travel_time_factor = (
         1.0
         + congestion_adj
@@ -140,7 +156,12 @@ def generate_training_data(
         + incident_adj
         + event_adj
         + lane_adj
-        + rng.normal(0, 0.015, n_samples)  # small noise
+        + urban_adj
+        + curvature_adj
+        + intersection_adj
+        + highway_adj
+        + toll_adj
+        + rng.normal(0, 0.012, n_samples)  # reduced noise for better signal
     )
     travel_time_factor = np.clip(travel_time_factor, 0.92, 1.50)
 
@@ -172,6 +193,13 @@ def generate_training_data(
         "historical_speed_kph": hist_speed,
         "historical_congestion": hist_cong,
         "speed_reliability": speed_rel,
+        "road_type_encoded": road_type_enc,
+        "highway_percentage": highway_pct,
+        "route_curvature": route_curvature,
+        "intersection_count": intersection_count,
+        "toll_roads": toll_roads,
+        "urban_density": urban_density,
+        "distance_category": distance_category,
         # ── target ────────────────────────────
         "travel_time_factor": travel_time_factor,
     })
