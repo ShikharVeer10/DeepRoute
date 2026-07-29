@@ -55,6 +55,31 @@ def build_features(
 
     ctx = context_features(traffic_data, weather_data)
 
+    road_type_map = {
+        "motorway": 0.0,
+        "trunk": 0.5,
+        "primary": 1.0,
+        "secondary": 2.0,
+        "tertiary": 2.5,
+        "residential": 3.0,
+        "service": 3.5,
+    }
+    rt = (road_type or "residential").lower()
+    ctx.road_type_encoded = road_type_map.get(rt, 2.0)
+    ctx.highway_percentage = max(0.0, min(1.0, 1.0 - (ctx.road_type_encoded / 4.0)))
+    ctx.route_curvature = round(max(0.01, abs(elevation_change_m) / max(segment_length_m, 1.0)), 4)
+    ctx.intersection_count = round(max(1.0, segment_length_m / 120.0), 2)
+    ctx.toll_roads = 1.0 if (ctx.highway_percentage > 0.7 and segment_length_m > 20000) else 0.0
+    ctx.urban_density = max(0.0, min(1.0, 0.2 + (ctx.road_type_encoded / 4.0)))
+    if segment_length_m < 5_000:
+        ctx.distance_category = 0.0
+    elif segment_length_m < 30_000:
+        ctx.distance_category = 1.0
+    elif segment_length_m < 120_000:
+        ctx.distance_category = 2.0
+    else:
+        ctx.distance_category = 3.0
+
     try:
         from app.features.historical_profiles import get_historical_context
         hist_ctx = get_historical_context(

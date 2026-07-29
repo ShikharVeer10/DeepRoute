@@ -286,6 +286,14 @@ class ContextFeatures(BaseModel):
     historical_speed_kph: float = Field(default=40.0, ge=0.0)
     historical_congestion: float = Field(default=0.3, ge=0.0, le=1.0)
     speed_reliability: float = Field(default=0.5, ge=0.0, le=1.0)
+    # Route-structure features (kept aligned with model training columns)
+    road_type_encoded: float = Field(default=1.0, ge=0.0)
+    highway_percentage: float = Field(default=0.5, ge=0.0, le=1.0)
+    route_curvature: float = Field(default=0.1, ge=0.0)
+    intersection_count: float = Field(default=5.0, ge=0.0)
+    toll_roads: float = Field(default=0.0, ge=0.0, le=1.0)
+    urban_density: float = Field(default=0.3, ge=0.0, le=1.0)
+    distance_category: float = Field(default=1.0, ge=0.0)
 
     @field_validator("congestion_index", "weather_severity", "road_risk_score", "historical_congestion", "speed_reliability", mode="before")
     @classmethod
@@ -336,13 +344,13 @@ class CombinedFeatureVector(BaseModel):
             self.context.historical_congestion,
             self.context.speed_reliability,
             # Extended features (from literature)
-            getattr(self.context, 'road_type_encoded', 1.0),
-            getattr(self.context, 'highway_percentage', 0.5),
-            getattr(self.context, 'route_curvature', 0.1),
-            getattr(self.context, 'intersection_count', 5.0),
-            getattr(self.context, 'toll_roads', 0.0),
-            getattr(self.context, 'urban_density', 0.3),
-            getattr(self.context, 'distance_category', 1.0),
+            self.context.road_type_encoded,
+            self.context.highway_percentage,
+            self.context.route_curvature,
+            self.context.intersection_count,
+            self.context.toll_roads,
+            self.context.urban_density,
+            self.context.distance_category,
         ]
 
     @property
