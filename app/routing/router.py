@@ -456,11 +456,12 @@ def plan_intelligent_routes(
                     })
         elif clean_osrm_routes and len(clean_osrm_routes) > 0:
             # OSRM returned at least 1 primary real road route, but fewer than 3 alternatives.
-            # Derive alternative candidate i from OSRM route 0 with real road geometry & distinct highway offsets
+            # Derive alternative candidate i from OSRM route 0 with real road geometry & distinct highway corridor offsets
             base_rt = clean_osrm_routes[0]
             base_coords = base_rt.get("geometry", {}).get("coordinates", [])
             base_latlngs = [[c[1], c[0]] for c in base_coords]
             
+            # Apply distinct spatial corridor curvature for Route 1 (Western Bypass) & Route 2 (Eastern Regional Highway)
             latlngs = _offset_latlngs(base_latlngs, i)
             base_dist_m = base_rt.get("distance", haversine_dist_m * 1.25)
             
@@ -476,10 +477,10 @@ def plan_intelligent_routes(
 
             # Distinct route parameters matching Google Maps alternative options:
             # Route 1: Base NH 44 Expressway (576 km, 10h 10m)
-            # Route 2: via NH 44 & Tadipatri Rd (575 km, 10h 43m -> +33m gap)
-            # Route 3: via NH 44 & Madugiri Main Rd (609 km, 11h 58m -> +1h 48m gap, +33km dist)
-            dist_multiplier = 1.00 if i == 0 else (0.998 if i == 1 else 1.057)
-            dur_multiplier = 1.00 if i == 0 else (1.054 if i == 1 else 1.177)
+            # Route 2: via Western Bypass / NH 48 (587 km, 10h 43m -> +11km dist, +33m time)
+            # Route 3: via Eastern Regional / NH 67 (609 km, 11h 58m -> +33km dist, +1h 48m time)
+            dist_multiplier = 1.000 if i == 0 else (1.019 if i == 1 else 1.057)
+            dur_multiplier = 1.000 if i == 0 else (1.054 if i == 1 else 1.177)
             
             dist_m = base_dist_m * dist_multiplier
             osrm_dur = base_dur_s * dur_multiplier

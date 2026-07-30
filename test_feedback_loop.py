@@ -14,7 +14,7 @@ from app.storage.database import get_prediction_accuracy, record_trip, record_pr
 client = TestClient(app)
 
 print("\n" + "="*60)
-print("🚀 TESTING DEEPROUTE DATA-COLLECTION FEEDBACK LOOP 🚀")
+print("=== TESTING DEEPROUTE DATA-COLLECTION FEEDBACK LOOP ===")
 print("="*60)
 
 init_db()
@@ -65,16 +65,16 @@ response = client.post(
 )
 
 if response.status_code == 200:
-    print(f"         ✅ Success! Endpoint returned: {response.json()}")
+    print(f"         [SUCCESS] Endpoint returned: {response.json()}")
 else:
-    print(f"         ❌ Failed! {response.status_code} {response.text}")
+    print(f"         [FAILED] {response.status_code} {response.text}")
 
 print(f"\n[STEP 4] Background accuracy model tracking triggered.")
 stats = get_prediction_accuracy(model_name="xgboost")
 
 if "xgboost" in stats:
     ens = stats["xgboost"]
-    print(f"\n📈 XGBOOST MODEL ACCURACY STATS GENERATED")
+    print(f"\n--- XGBOOST MODEL ACCURACY STATS GENERATED ---")
     print(f"   Total Trips Assessed: {ens['total']}")
     print(f"   Avg Predicted:        {ens['avg_predicted']/3600:.1f} hr")
     print(f"   Avg Actual:           {ens['avg_actual']/3600:.1f} hr")
@@ -83,5 +83,5 @@ if "xgboost" in stats:
 else:
     print("   No stats generated.")
 
-print("\n✨ The loop is complete! The system stores error margins to tweak future predictions.")
+print("\n[COMPLETE] The loop is complete! The system stores error margins to tweak future predictions.")
 print("="*60 + "\n")

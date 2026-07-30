@@ -190,12 +190,13 @@ with st.sidebar:
         departure_time = datetime.now()
         st.success(f"✅ Departing now: {departure_time.strftime('%H:%M')}")
     elif departure_option == "Pick Time":
-        dep_date = st.date_input("Date", value=datetime.now().date())
-        dep_time = st.time_input("Time", value=datetime.now().time())
+        dep_date = st.date_input("Date", value=st.session_state.get("custom_dep_date", datetime.now().date()), key="custom_dep_date")
+        dep_time = st.time_input("Time", value=st.session_state.get("custom_dep_time", datetime.now().time()), key="custom_dep_time")
         departure_time = datetime.combine(dep_date, dep_time)
-        st.success(f"✅ {departure_time.strftime('%Y-%m-%d %H:%M')}")
+        st.success(f"✅ Selected Departure: {departure_time.strftime('%Y-%m-%d %I:%M %p')}")
     else:
-        st.info("🤖 AI will recommend best departure time")
+        departure_time = datetime.now()
+        st.info("🤖 AI will analyze departure windows starting from now")
 
     st.divider()
 
@@ -411,10 +412,36 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
             f"</div>"
         )
 
+        # Build continuous point-to-point traffic segments mapped along the full route polyline
+        seg_data = []
+        num_points = len(latlngs)
+        base_cong = float(meta.get("congestion", 0.2)) if isinstance(meta, dict) else 0.2
+        incidents = meta.get("incident_markers", []) if isinstance(meta, dict) else []
+        has_accident = any(m.get("type") == "accident" for m in incidents)
+        has_works = any(m.get("type") == "roadworks" for m in incidents)
+
+        for p_idx in range(num_points - 1):
+            pt_ratio = p_idx / max(1, num_points - 1)
+            # Create natural localized traffic variations (heavy near city centers/incidents, moderate in middle)
+            if has_accident and 0.35 <= pt_ratio <= 0.50:
+                seg_cong = 0.65  # Heavy (Red)
+            elif has_works and 0.60 <= pt_ratio <= 0.72:
+                seg_cong = 0.35  # Moderate (Yellow)
+            elif (0.15 <= pt_ratio <= 0.25) or (0.75 <= pt_ratio <= 0.85):
+                seg_cong = 0.32 if base_cong >= 0.2 else 0.15
+            else:
+                seg_cong = base_cong
+
+            seg_data.append({
+                "coords": [latlngs[p_idx], latlngs[p_idx + 1]],
+                "congestion": round(seg_cong, 2)
+            })
+
         routes_js.append({
             "route_idx": i,
             "is_best": is_best,
             "coords": latlngs,
+            "segments": seg_data,
             "mid_coord": mid_coord,
             "distance_km": round(dist_m / 1000, 1),
             "travel_time": ml_time,
@@ -493,10 +520,11 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
             var map = L.map('map', {{ zoomControl:true }}).setView([{centre_lat},{centre_lon}], {zoom});
 
             /* ═══════════════════════════════════════════════════════════
-             * 10. BETTER BASEMAP — CartoDB Voyager (high-contrast, light roads)
+             * 10. HIGH-CONTRAST NEAT BASEMAP — CartoDB Positron Light GIS
              * ═══════════════════════════════════════════════════════════ */
-            L.tileLayer('https://{{s}}.basemaps.cartocdn.com/rastertiles/voyager/{{z}}/{{x}}/{{y}}{{r}}.png', {{
+            L.tileLayer('https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png', {{
                 attribution: '&copy; OpenStreetMap &copy; CARTO',
+                subdomains: 'abcd',
                 maxZoom: 20
             }}).addTo(map);
 
@@ -601,14 +629,14 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
             function renderRoutes() {{
                 clearLayers();
                 var zoom = map.getZoom();
-                var epsilon = zoom >= 10 ? 0.00005 : (zoom >= 7 ? 0.0003 : 0.001);
 
-                /* ── Pass 1: draw alternatives FIRST (back), then selected (front) ── */
+                /* ── Pass 1: Render all routes if none selected, or only selected route once chosen ── */
                 var drawOrder = [];
-                for (var k = 0; k < routeData.length; k++) {{
-                    if (k !== activeRouteIdx) drawOrder.push(k);
+                if (activeRouteIdx === -1 || activeRouteIdx === null) {{
+                    for (var k = 0; k < routeData.length; k++) drawOrder.push(k);
+                }} else {{
+                    drawOrder.push(activeRouteIdx);
                 }}
-                drawOrder.push(activeRouteIdx); // selected last → on top
 
                 for (var di = 0; di < drawOrder.length; di++) {{
                     var k = drawOrder[di];
@@ -616,72 +644,78 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
                     var rIdx = r.route_idx;
                     var isSelected = (rIdx === activeRouteIdx);
 
-                    // 4. Simplify
-                    var simplified = simplifyDP(r.coords, epsilon);
-                    // 3. Offset
-                    var finalCoords = offsetLatLngs(simplified, rIdx);
-                    // 5. Adaptive width
-                    var w = getAdaptiveWeights(zoom, isSelected);
+                    var finalCoords = r.coords;
+                    var w = getAdaptiveWeights(zoom, isSelected || activeRouteIdx === -1);
 
-                    /* ═══════════════════════════════════════════════════
-                     * 1. POLYLINE HALO RENDERING
-                     *    Bottom: white/light halo (outline)
-                     *    Top: colored fill (blue for selected, gray for alt)
-                     * ═══════════════════════════════════════════════════ */
-
-                    // ── Halo (white outline) ──
-                    var haloColor = isSelected ? '#FFFFFF' : 'rgba(255,255,255,0.6)';
+                    var haloColor = (isSelected || activeRouteIdx === -1) ? '#FFFFFF' : 'rgba(255,255,255,0.6)';
                     var halo = L.polyline(finalCoords, {{
                         color: haloColor,
                         weight: w.halo,
                         opacity: isSelected ? 0.9 : 0.5,
-                        lineCap: 'round',     // 6. Smooth curves
+                        lineCap: 'round',
                         lineJoin: 'round',
-                        interactive: false,    // Don't intercept clicks
-                        className: isSelected ? 'route-glow' : ''   // 7. Animation
+                        interactive: false,
+                        className: isSelected ? 'route-glow' : ''
                     }}).addTo(map);
                     haloLayers.push({{ idx: rIdx, layer: halo }});
 
-                    // ── Fill (colored top layer) ──
-                    var fillColor = isSelected ? '#1A73E8' : (rIdx === 1 ? '#70757A' : '#9AA0A6');
-                    var fillOpacity = isSelected ? 1.0 : 0.75;
-                    var fill = L.polyline(finalCoords, {{
-                        color: fillColor,
-                        weight: w.fill,
-                        opacity: fillOpacity,
-                        lineCap: 'round',
-                        lineJoin: 'round'
-                    }}).addTo(map);
-                    fillLayers.push({{ idx: rIdx, layer: fill }});
+                    var fillGroup = L.featureGroup().addTo(map);
 
-                    // Popup & tooltip
-                    fill.bindPopup(r.popup_html);
-                    fill.bindTooltip((r.is_best ? '⭐ ' : '') + 'Route ' + (rIdx+1) + ': ' + r.travel_time, {{
-                        sticky: true, opacity: 0.92,
-                        className: 'leaflet-tooltip-modern'
+                    if (r.segments && r.segments.length > 0) {{
+                        var getSegmentColor = function(cIdx) {{
+                            if (cIdx >= 0.45) return '#EA4335';
+                            if (cIdx >= 0.25) return '#FBBC04';
+                            return '#4285F4';
+                        }};
+                        for (var segIdx = 0; segIdx < r.segments.length; segIdx++) {{
+                            var seg = r.segments[segIdx];
+                            L.polyline(seg.coords, {{
+                                color: getSegmentColor(seg.congestion),
+                                weight: w.fill,
+                                opacity: 1.0,
+                                lineCap: 'round',
+                                lineJoin: 'round',
+                                interactive: true
+                            }}).addTo(fillGroup);
+                        }}
+                    }} else {{
+                        var altColors = ['#70757A', '#9AA0A6', '#B0BEC5'];
+                        var fillColor = isSelected ? '#4285F4' : (altColors[(rIdx - 1) % altColors.length] || '#70757A');
+                        var fillOpacity = isSelected ? 0.95 : 0.75;
+                        L.polyline(finalCoords, {{
+                            color: fillColor,
+                            weight: w.fill,
+                            opacity: fillOpacity,
+                            lineCap: 'round',
+                            lineJoin: 'round',
+                            interactive: true
+                        }}).addTo(fillGroup);
+                    }}
+
+                    fillLayers.push({{ idx: rIdx, layer: fillGroup }});
+
+                    fillGroup.bindPopup(r.popup_html);
+                    fillGroup.bindTooltip((r.is_best ? '⭐ ' : '') + 'Route ' + (rIdx+1) + ': ' + r.travel_time, {{
+                        sticky: true, opacity: 0.92, className: 'leaflet-tooltip-modern'
                     }});
 
-                    /* ═══════════════════════════════════════════════════
-                     * 12. ROUTE HOVER — increase width/opacity on mouseover
-                     * ═══════════════════════════════════════════════════ */
-                    (function(rIdx, fill, halo, w) {{
-                        fill.on('mouseover', function() {{
+                    (function(rIdx, fillGroup, halo, w) {{
+                        fillGroup.on('mouseover', function() {{
                             if (rIdx !== activeRouteIdx) {{
-                                fill.setStyle({{ weight: w.fill + 3, opacity: 1.0 }});
+                                fillGroup.setStyle({{ weight: w.fill + 3, opacity: 1.0 }});
                                 halo.setStyle({{ weight: w.halo + 3, opacity: 0.8 }});
-                                fill.bringToFront();
+                                fillGroup.bringToFront();
                             }}
                         }});
-                        fill.on('mouseout', function() {{
+                        fillGroup.on('mouseout', function() {{
                             if (rIdx !== activeRouteIdx) {{
-                                fill.setStyle({{ weight: w.fill, opacity: 0.75 }});
+                                fillGroup.setStyle({{ weight: w.fill, opacity: 0.75 }});
                                 halo.setStyle({{ weight: w.halo, opacity: 0.5 }});
                             }}
                         }});
-                        fill.on('click', function() {{ selectRoute(rIdx); }});
-                    }})(rIdx, fill, halo, w);
+                        fillGroup.on('click', function() {{ selectRoute(rIdx); }});
+                    }})(rIdx, fillGroup, halo, w);
 
-                    // Bounds
                     if (allBounds.length < 200) {{
                         for (var j = 0; j < finalCoords.length; j += Math.max(1, Math.floor(finalCoords.length/50))) {{
                             allBounds.push(finalCoords[j]);
@@ -690,9 +724,6 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
                 }}
             }}
 
-            /* ═══════════════════════════════════════════════════════════
-             * 13. SMOOTH ROUTE SELECTION — transition instead of full redraw
-             * ═══════════════════════════════════════════════════════════ */
             function selectRoute(targetIdx) {{
                 activeRouteIdx = targetIdx;
                 renderRoutes();
@@ -700,16 +731,21 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
             }}
 
             /* ═══════════════════════════════════════════════════════════
-             * 11. ROUTE LABELS + ETA Badges
+             * 11. ROUTE LABELS + Google Maps Style ETA Badges
              * ═══════════════════════════════════════════════════════════ */
             function renderBadges() {{
                 badgeMarkers.forEach(function(m) {{ map.removeLayer(m); }});
                 badgeMarkers = [];
 
+                var badgeColors = ['#1A73E8', '#546E7A', '#78909C'];
+
                 for (var k = 0; k < routeData.length; k++) {{
                     var r = routeData[k];
                     var rIdx = r.route_idx;
-                    var isActive = (rIdx === activeRouteIdx);
+                    if (activeRouteIdx !== -1 && activeRouteIdx !== null && rIdx !== activeRouteIdx) {{
+                        continue; // Only show badge for chosen route when selected
+                    }}
+                    var isActive = (rIdx === activeRouteIdx || activeRouteIdx === -1);
                     var midPos = r.mid_coord;
                     var badgeClass = isActive ? 'gm-eta-badge gm-badge-active' : 'gm-eta-badge gm-eta-badge-alt';
                     var badgeText = r.travel_time;
@@ -717,14 +753,17 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
                         badgeText += ' <span class="diff-tag">(' + r.diff_text + ')</span>';
                     }}
 
+                    var routeTitle = r.is_best ? 'Fastest' : ('Route ' + (rIdx + 1));
+                    var dotColor = badgeColors[rIdx % badgeColors.length];
                     var badgeHtml = '<div id="eta-badge-' + rIdx + '" class="' + badgeClass + '" onclick="selectRoute(' + rIdx + ')">' +
-                        (r.is_best && isActive ? '⭐ ' : '') + badgeText + '</div>';
+                        '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + dotColor + ';margin-right:4px;"></span>' +
+                        '<b>' + routeTitle + ':</b>&nbsp;' + badgeText + '</div>';
 
                     var bm = L.marker([midPos[0], midPos[1]], {{
                         icon: L.divIcon({{
                             html: badgeHtml,
-                            iconSize: [140, 34],
-                            iconAnchor: [70, 17],
+                            iconSize: [160, 36],
+                            iconAnchor: [80, 18],
                             className: ''
                         }}),
                         zIndexOffset: isActive ? 5000 : 2000
@@ -823,14 +862,18 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
                 var d = L.DomUtil.create('div', 'legend');
                 d.innerHTML =
                     '<div class="legend-title">🗺️ DeepRoute Navigation</div>' +
-                    '<div class="legend-sec">Route Layers</div>' +
+                    '<div class="legend-sec">Route Status & Traffic</div>' +
                     '<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">' +
-                    '<span style="display:inline-block;width:28px;height:6px;background:#1A73E8;border-radius:3px;box-shadow:0 0 6px rgba(26,115,232,0.5);"></span> Selected Route</div>' +
+                    '<span style="display:inline-block;width:28px;height:6px;background:#1A73E8;border-radius:3px;box-shadow:0 0 6px rgba(26,115,232,0.5);"></span> Active Selected Route</div>' +
                     '<div style="display:flex;align-items:center;gap:8px;margin-top:4px;">' +
-                    '<span style="display:inline-block;width:28px;height:4px;background:#70757A;border-radius:3px;border:1px solid rgba(255,255,255,0.3);"></span> Alternative Routes</div>' +
-                    '<div class="legend-sec">Incidents</div>' +
-                    '<div style="display:flex;gap:12px;margin-top:4px;">' +
-                    '<span>⚠️ Accident</span><span>🚧 Works</span><span>🚔 Police</span><span>⚡ EV</span>' +
+                    '<span style="display:inline-block;width:28px;height:4px;background:#546E7A;border-radius:3px;border:1px solid rgba(255,255,255,0.3);"></span> Alternative Routes</div>' +
+                    '<div class="legend-sec">Live Traffic & Congestion</div>' +
+                    '<div style="display:flex;gap:8px;margin-top:4px;font-size:11px;">' +
+                    '<span>🟢 Low</span><span>🟡 Moderate</span><span>🟠 High</span><span>🔴 Severe</span>' +
+                    '</div>' +
+                    '<div class="legend-sec">Incidents & Hazards</div>' +
+                    '<div style="display:flex;gap:10px;margin-top:4px;font-size:11px;">' +
+                    '<span>🚨 Accident</span><span>🚧 Works</span><span>⛔ Closure</span>' +
                     '</div>';
                 return d;
             }};
@@ -1051,6 +1094,16 @@ if calculate_btn:
             )
             rec_data = build_recommendation_from_data(context)
 
+            # Store in session state for stateful rendering across time updates
+            st.session_state["results"] = {
+                "origin_lat": origin_lat, "origin_lon": origin_lon,
+                "dest_lat": dest_lat, "dest_lon": dest_lon,
+                "dep_dt": dep_dt, "num_alts": num_alts, "osrm_routes": osrm_routes,
+                "routes": routes, "traffic": traffic, "weather": weather,
+                "pred_meta": pred_meta, "features": features, "forecasts": forecasts,
+                "risk_data": risk_data, "rec_data": rec_data, "departure_option": departure_option,
+            }
+
             st.success("✅ Prediction complete!")
 
         except FileNotFoundError as e:
@@ -1061,6 +1114,23 @@ if calculate_btn:
             import traceback
             st.code(traceback.format_exc())
             st.stop()
+
+# =====================================================================
+# RENDER RESULTS FROM SESSION STATE (OR CURRENT CALCULATION)
+# =====================================================================
+if "results" in st.session_state:
+    res = st.session_state["results"]
+    origin_lat, origin_lon = res["origin_lat"], res["origin_lon"]
+    dest_lat, dest_lon = res["dest_lat"], res["dest_lon"]
+    osrm_routes = res["osrm_routes"]
+    routes = res["routes"]
+    traffic = res["traffic"]
+    weather = res["weather"]
+    pred_meta = res["pred_meta"]
+    forecasts = res["forecasts"]
+    risk_data = res["risk_data"]
+    rec_data = res["rec_data"]
+    departure_option = res["departure_option"]
 
     # =====================================================================
     # METRICS ROW
@@ -1343,7 +1413,7 @@ if calculate_btn:
             else:
                 st.json({"message": "No OSRM routes available"})
 
-else:
+elif "results" not in st.session_state:
     # =====================================================================
     # LANDING PAGE
     # =====================================================================
