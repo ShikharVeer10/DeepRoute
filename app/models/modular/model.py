@@ -1,10 +1,12 @@
 
+# pyrefly: ignore [missing-import]
 import lightgbm as lgb
+# pyrefly: ignore [missing-import]
 import xgboost as xgb
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 
 
-def create_lightgbm_model(params: Optional[Dict[str, Any]] = None) -> lgb.LGBMRegressor:
+def create_lightgbm_model(params: Dict[str, Any] = None) -> lgb.LGBMRegressor:
     default_params = {
         "n_estimators": 500,
         "learning_rate": 0.03,
@@ -16,12 +18,12 @@ def create_lightgbm_model(params: Optional[Dict[str, Any]] = None) -> lgb.LGBMRe
         "n_jobs": -1,
         "verbose": -1,
     }
-    if params is not None:
+    if params:
         default_params.update(params)
     return lgb.LGBMRegressor(**default_params)
 
 
-def create_xgboost_model(params: Optional[Dict[str, Any]] = None) -> xgb.XGBRegressor:
+def create_xgboost_model(params: Dict[str, Any] = None) -> xgb.XGBRegressor:
     """Create an XGBoost Regressor instance with default or custom params."""
     default_params = {
         "n_estimators": 500,
@@ -33,6 +35,6 @@ def create_xgboost_model(params: Optional[Dict[str, Any]] = None) -> xgb.XGBRegr
         "n_jobs": -1,
         "verbosity": 0,
     }
-    if params is not None:
+    if params:
         default_params.update(params)
     return xgb.XGBRegressor(**default_params)

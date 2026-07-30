@@ -1,7 +1,7 @@
 """
 DeepRoute — Intelligent Route Planner
-Self-contained Streamlit dashboard with XGBoost ML predictions,
-OSRM real-road routing, Open-Meteo live weather, and route optimization.
+Self-contained Streamlit dashboard with route-specific ETA predictions,
+TomTom real-road routing, Open-Meteo live weather, and route optimization.
 """
 
 import streamlit as st
@@ -122,15 +122,15 @@ st.markdown("""
 # ============================================================================
 st.markdown('<p class="main-title">🗺️ DeepRoute</p>', unsafe_allow_html=True)
 st.markdown(
-    '<p class="subtitle">XGBoost ML Route Planner · '
-    'OSRM Road Routing · Open-Meteo Live Weather</p>',
+    '<p class="subtitle">TomTom Live Routing · '
+    'Route-specific ML ETA · Open-Meteo Live Weather</p>',
     unsafe_allow_html=True,
 )
 
 st.success(
     "🌦️ **Live Weather** via [Open-Meteo](https://open-meteo.com/) · "
-    "🛣️ **Real Road Routes** via [OSRM](https://project-osrm.org/) — "
-    "all free, no API keys needed!"
+    "🛣️ **Real Road Routes** via [TomTom Routing](https://developer.tomtom.com/) "
+    "with live traffic-aware alternatives"
 )
 
 # ============================================================================
@@ -201,7 +201,7 @@ with st.sidebar:
     st.divider()
 
     st.subheader("🧠 Prediction Settings")
-    st.caption("Using highly efficient XGBoost model for route prediction")
+    st.caption("Using route-specific ETA model for route prediction")
     model_type = "xgboost"
     num_alts = st.slider("Alternative Routes (Google Maps Style)", 1, 3, 3)
 
@@ -241,22 +241,10 @@ def _fetch_osrm_routes(origin_lat, origin_lon, dest_lat, dest_lon, num_alts=3):
     Fetch real road-following routes from OSRM (free, no API key).
     Returns list of route dicts with geometry, distance, duration, steps.
     """
-    url = (
-        f"https://router.project-osrm.org/route/v1/driving/"
-        f"{origin_lon},{origin_lat};{dest_lon},{dest_lat}"
-        f"?overview=full&geometries=geojson"
-        f"&alternatives={'true' if num_alts > 1 else 'false'}"
-        f"&steps=true"
-    )
-    try:
-        resp = http_requests.get(url, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
-        if data.get("code") == "Ok":
-            return data.get("routes", [])
-    except Exception as e:
-        st.warning(f"⚠️ OSRM routing failed: {e}. Using straight-line fallback.")
-    return []
+    # The shared candidate provider verifies geometric diversity and never
+    # manufactures a visual alternative when OSRM has only one corridor.
+    from app.routing.route_planner import fetch_diverse_routes
+    return fetch_diverse_routes(origin_lat, origin_lon, dest_lat, dest_lon, num_alts)
 
 
 def _route_traffic_color(congestion_index: float) -> str:
@@ -352,11 +340,6 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
 
     routes_js = []
     total_to_draw = min(3, max(len(route_metas), 1))
-    fallback_base_latlngs = []
-    if osrm_routes:
-        base_coords = osrm_routes[0].get("geometry", {}).get("coordinates", [])
-        fallback_base_latlngs = [[c[1], c[0]] for c in base_coords]
-
     best_time_s = 0
     if route_metas and len(route_metas) > 0:
         best_time_s = route_metas[0].get("total_travel_time_s", 0)
@@ -364,21 +347,13 @@ def _build_map_html(origin_lat, origin_lon, dest_lat, dest_lon,
     for i in range(total_to_draw):
         meta = route_metas[i] if i < len(route_metas) else {}
         osrm_rt = osrm_routes[i] if i < len(osrm_routes) else None
-
-        if osrm_rt and osrm_rt.get("geometry", {}).get("coordinates"):
-            coords = osrm_rt["geometry"]["coordinates"]
+        # Render exactly the geometry that was scored and ranked.
+        latlngs = meta.get("coords", [])
+        if not latlngs and osrm_rt:
+            coords = osrm_rt.get("geometry", {}).get("coordinates", [])
             latlngs = [[c[1], c[0]] for c in coords]
-        elif fallback_base_latlngs:
-            latlngs = _offset_latlngs(fallback_base_latlngs, i)
-        else:
-            path_points = 50
-            latlngs = []
-            for p in range(path_points + 1):
-                t = p / path_points
-                curve = math.sin(math.pi * t) * 0.015 * ((-1) ** i) * max(1, i)
-                lat = origin_lat + (dest_lat - origin_lat) * t + curve
-                lon = origin_lon + (dest_lon - origin_lon) * t - (curve * 0.35)
-                latlngs.append([lat, lon])
+        if len(latlngs) < 2:
+            continue
 
         is_best = (i == 0)
         dist_m = meta.get("total_distance_m", osrm_rt.get("distance", 0) if osrm_rt else 0)
@@ -1229,7 +1204,7 @@ if "results" in st.session_state:
             "Comfort": f"{r.get('driving_comfort_score', 0.0)*100:.0f}%",
             "Incidents": incidents_str,
             "External Factors": r.get("external_event", "Clear Route"),
-            "OSRM Duration": r.get("osrm_duration_display", "—"),
+            "Routing Duration": r.get("osrm_duration_display", "—"),
             "Reliability": f"{r['reliability_score']*100:.0f}%",
             "Risk": r["risk_level"].upper(),
             "CO₂ (g)": round(r["emissions_g_co2"]),
@@ -1325,7 +1300,7 @@ if "results" in st.session_state:
                     st.caption(f"Why this prediction: {route['traffic_reasoning']}")
 
                 if route.get("osrm_duration_display"):
-                    st.caption(f"📍 OSRM base duration: {route['osrm_duration_display']}")
+                    st.caption(f"📍 Routing engine duration: {route['osrm_duration_display']}")
                 ci_lo = route["confidence_interval_lower_s"]
                 ci_hi = route["confidence_interval_upper_s"]
                 cvar_disp = route.get("total_cvar_display", "—")
@@ -1405,13 +1380,13 @@ if "results" in st.session_state:
             st.json(pred_meta)
         with st.expander("Forecast Data"):
             st.json(forecasts)
-        with st.expander("OSRM Raw Response (Route 1)"):
+        with st.expander("Routing Raw Response (Route 1)"):
             if osrm_routes:
                 r0 = {k:v for k,v in osrm_routes[0].items() if k != 'geometry'}
                 r0["geometry_points"] = len(osrm_routes[0].get("geometry", {}).get("coordinates", []))
                 st.json(r0)
             else:
-                st.json({"message": "No OSRM routes available"})
+                st.json({"message": "No routing alternatives available"})
 
 elif "results" not in st.session_state:
     # =====================================================================
@@ -1449,8 +1424,8 @@ elif "results" not in st.session_state:
     st.markdown("##### 🏗️ System Architecture")
     arch_cols = st.columns(4)
     labels = [
-        ("🧠", "XGBoost ML Engine", "Gradient-boosted tree prediction"),
-        ("🛣️", "OSRM Road Routing", "Real road geometry · Turn-by-turn"),
+        ("🧠", "Route ETA Engine", "Model-driven route-time prediction"),
+        ("🛣️", "TomTom Road Routing", "Real road geometry · Traffic aware"),
         ("🌦️", "Open-Meteo Weather", "Live weather · No API key needed"),
         ("🤖", "AI Recommendations", "Rule-based route analysis"),
     ]
@@ -1468,4 +1443,4 @@ elif "results" not in st.session_state:
 # FOOTER
 # ============================================================================
 st.divider()
-st.caption("🗺️ DeepRoute v2.0 — XGBoost ML pipeline · OSRM road routing · Open-Meteo live weather · Streamlit dashboard")
+st.caption("🗺️ DeepRoute v2.0 — TomTom routing · route-specific ML ETA · Open-Meteo live weather · Streamlit dashboard")

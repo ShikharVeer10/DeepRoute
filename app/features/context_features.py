@@ -3,7 +3,6 @@ Context feature extraction — combines traffic, weather, and event signals.
 """
 
 from app.schemas import ContextFeatures
-import random
 
 
 def context_features(
@@ -25,7 +24,7 @@ def context_features(
     incident_prox = traffic.get("incident_proximity_km", 99.0)
 
     if event_proximity_km is None:
-        event_proximity_km = random.expovariate(0.1)
+        event_proximity_km = 99.0
 
     road_risk = min(1.0, max(0.0,
         0.35 * congestion

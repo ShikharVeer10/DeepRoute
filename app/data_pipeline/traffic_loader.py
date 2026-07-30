@@ -1,4 +1,3 @@
-import random
 import math
 from datetime import datetime
 from loguru import logger
@@ -17,14 +16,14 @@ def get_traffic(hour: int | None = None) -> dict:
     weekend_factor = 0.6 if day_of_week >= 5 else 1.0
 
     base_congestion = _peak_factor(hour) * weekend_factor
-    noise = random.gauss(0, 0.08)
-    congestion = max(0.0, min(1.0, base_congestion + noise))
+    # Deterministic historical-profile fallback; a fallback must never invent a new ETA.
+    congestion = max(0.0, min(1.0, base_congestion))
 
-    free_flow_speed = random.uniform(60, 100)
+    free_flow_speed = 80.0
     avg_speed = free_flow_speed * (1 - 0.7 * congestion)
 
-    incident = random.random() < 0.05
-    incident_proximity = random.expovariate(0.2) if incident else 99.0
+    incident = False
+    incident_proximity = 99.0
 
     traffic_data = {
         "congestion_index": round(congestion, 4),
