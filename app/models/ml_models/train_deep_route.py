@@ -168,7 +168,7 @@ def train_deep_route(epochs: int = 15, batch_size: int = 64, lr: float = 0.001):
         file_path=str(model_path.resolve())
     )
 
-    print("\n✅ DeepRoute Model trained and registered successfully!")
+    print("\n[SUCCESS] DeepRoute Model trained and registered successfully!")
 
 if __name__ == "__main__":
     train_deep_route()

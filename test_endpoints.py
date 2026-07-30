@@ -6,7 +6,7 @@ BASE_URL = "http://127.0.0.1:8000/api"
 
 def print_section(title):
     print("\n" + "="*80)
-    print(f"⚡ Testing Endpoint: {title}")
+    print(f"[TEST] Testing Endpoint: {title}")
     print("="*80)
 
 def test_endpoints():
@@ -27,7 +27,7 @@ def test_endpoints():
 
     for model_type in ["xgboost", "deep_route"]:
         print("\n" + "#"*80)
-        print(f"🧪 RUNNING TESTS FOR MODEL TYPE: {model_type.upper()}")
+        print(f"[TEST] RUNNING TESTS FOR MODEL TYPE: {model_type.upper()}")
         print("#"*80)
 
         # Payload base
@@ -101,7 +101,7 @@ def test_endpoints():
             print(f"AI Summary: {data['summary']}")
             print(f"AI Tip: {data.get('recommended_departure', '')}")
 
-    print("\n✅ All Endpoints and Models Responded Successfully!")
+    print("\n[SUCCESS] All Endpoints and Models Responded Successfully!")
 
 
 if __name__ == "__main__":

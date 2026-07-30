@@ -19,12 +19,12 @@ def run_training_pipeline(n_trials: int = OPTUNA_N_TRIALS):
     Executes dataset loading, 5-fold cross validation, Optuna Bayesian optimization,
     model comparison (LightGBM vs XGBoost), metric evaluation, and exports best_model.pkl.
     """
-    print("🚀 [DeepRoute Modular ML] Loading dataset & features...")
+    print("[DeepRoute Modular ML] Loading dataset & features...")
     X, y, feature_names = load_dataset()
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     # 1. Optuna for LightGBM
-    print(f"🔍 Running Optuna Bayesian Optimization on LightGBM ({n_trials} trials)...")
+    print(f"[Optuna] Running Bayesian Optimization on LightGBM ({n_trials} trials)...")
     def objective_lgb(trial):
         params = {
             "n_estimators": trial.suggest_int("n_estimators", 100, 600),
@@ -52,7 +52,7 @@ def run_training_pipeline(n_trials: int = OPTUNA_N_TRIALS):
     lgb_metrics = evaluate_predictions(y_test.values, lgb_preds)
 
     # 2. Optuna for XGBoost
-    print(f"🔍 Running Optuna Bayesian Optimization on XGBoost ({n_trials} trials)...")
+    print(f"[Optuna] Running Bayesian Optimization on XGBoost ({n_trials} trials)...")
     def objective_xgb(trial):
         params = {
             "n_estimators": trial.suggest_int("n_estimators", 100, 600),
@@ -78,7 +78,7 @@ def run_training_pipeline(n_trials: int = OPTUNA_N_TRIALS):
     xgb_preds = best_xgb_model.predict(X_test)
     xgb_metrics = evaluate_predictions(y_test.values, xgb_preds)
 
-    print("\n📊 --- BENCHMARK RESULTS ---")
+    print("\n--- BENCHMARK RESULTS ---")
     print(f"LightGBM: MAE={lgb_metrics['MAE']}, RMSE={lgb_metrics['RMSE']}, MAPE={lgb_metrics['MAPE_pct']}%, R2={lgb_metrics['R2']}")
     print(f"XGBoost:  MAE={xgb_metrics['MAE']}, RMSE={xgb_metrics['RMSE']}, MAPE={xgb_metrics['MAPE_pct']}%, R2={xgb_metrics['R2']}")
 
@@ -93,7 +93,7 @@ def run_training_pipeline(n_trials: int = OPTUNA_N_TRIALS):
         winner = "XGBoost"
         joblib.dump(best_xgb_model, DEFAULT_MODEL_PATH)
 
-    print(f"🏆 Winner: {winner} saved to {DEFAULT_MODEL_PATH}")
+    print(f"[Winner] {winner} saved to {DEFAULT_MODEL_PATH}")
     return {"LightGBM": lgb_metrics, "XGBoost": xgb_metrics, "winner": winner}
 
 
